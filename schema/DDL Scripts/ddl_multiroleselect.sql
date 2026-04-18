@@ -21,9 +21,19 @@ FROM [dbo].[UserHospitalMappings]
 WHERE [RoleId] IS NOT NULL;
 
 -- 3. Cleanup UserHospitalMappings
--- Remove the single RoleId column (only after verification)
--- Note: We keep the Unique Index on (UserId, HospitalId) to ensure one mapping entry per relationship.
-ALTER TABLE [dbo].[UserHospitalMappings] DROP CONSTRAINT [FK_UserHospitalMappings_Roles_RoleId];
+-- Dynamically find and drop the Foreign Key constraint for RoleId
+DECLARE @ConstraintName nvarchar(200)
+SELECT @ConstraintName = name
+FROM sys.foreign_keys
+WHERE parent_object_id = OBJECT_ID('dbo.UserHospitalMappings')
+AND referenced_object_id = OBJECT_ID('dbo.Roles');
+
+IF @ConstraintName IS NOT NULL
+BEGIN
+    EXEC('ALTER TABLE [dbo].[UserHospitalMappings] DROP CONSTRAINT ' + @ConstraintName)
+END
+
+-- Drop the column
 ALTER TABLE [dbo].[UserHospitalMappings] DROP COLUMN [RoleId];
 
 COMMIT;
