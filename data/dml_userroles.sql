@@ -1,8 +1,8 @@
 /* =========================================================
    Seed Roles
    ========================================================= */
-IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'CMO')
-    INSERT INTO dbo.Roles (RoleName) VALUES ('CMO');
+IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'AdminDoctor')
+    INSERT INTO dbo.Roles (RoleName) VALUES ('AdminDoctor');
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'Admin')
     INSERT INTO dbo.Roles (RoleName) VALUES ('Admin');
