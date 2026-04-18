@@ -15,4 +15,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'Technician')
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'Receptionist')
     INSERT INTO dbo.Roles (RoleName) VALUES ('Receptionist');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'Accountant')
+    INSERT INTO dbo.Roles (RoleName) VALUES ('Accountant');
 GO
