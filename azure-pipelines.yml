@@ -1,0 +1,104 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr: none
+
+parameters:
+  - name: action
+    displayName: Action
+    type: string
+    default: deploy
+    values:
+      - deploy
+      - rollback
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: sql-dev-secrets
+
+stages:
+  - stage: DevDB
+    displayName: Dev DB Deployment
+    jobs:
+      - job: RunSQL
+        steps:
+          - checkout: self
+
+          # Install sqlcmd
+          - task: Bash@3
+            displayName: Install sqlcmd
+            inputs:
+              targetType: inline
+              script: |
+                set -e
+
+                curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+                curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+                sudo apt-get update
+                sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+
+                echo '##vso[task.prependpath]/opt/mssql-tools18/bin'
+
+          # Deploy
+          - task: Bash@3
+            displayName: Deploy DB
+            condition: eq('${{ parameters.action }}', 'deploy')
+            inputs:
+              targetType: inline
+              script: |
+                set -e
+
+                echo "===== DEPLOY START ====="
+
+                # SCHEMA (recursive)
+                echo "Running schema scripts..."
+                find schema -type f -name "*.sql" | sort | while IFS= read -r file
+                do
+                  echo "Executing: $file"
+                  sqlcmd -S "$(SqlServer)" \
+                         -d "$(DatabaseName)" \
+                         -U "$(SqlUser)" \
+                         -P "$(SqlPassword)" \
+                         -C -b -i "$file"
+                done
+
+                # DATA
+                echo "Running data scripts..."
+                find data -type f -name "*.sql" | sort | while IFS= read -r file
+                do
+                  echo "Executing: $file"
+                  sqlcmd -S "$(SqlServer)" \
+                         -d "$(DatabaseName)" \
+                         -U "$(SqlUser)" \
+                         -P "$(SqlPassword)" \
+                         -C -b -i "$file"
+                done
+
+                echo "===== DEPLOY DONE ====="
+
+          # ROLLBACK
+          - task: Bash@3
+            displayName: Rollback DB
+            condition: eq('${{ parameters.action }}', 'rollback')
+            inputs:
+              targetType: inline
+              script: |
+                set -e
+
+                echo "===== ROLLBACK START ====="
+
+                find rollback -type f -name "*.sql" | sort -r | while IFS= read -r file
+                do
+                  echo "Executing: $file"
+                  sqlcmd -S "$(SqlServer)" \
+                         -d "$(DatabaseName)" \
+                         -U "$(SqlUser)" \
+                         -P "$(SqlPassword)" \
+                         -C -b -i "$file"
+                done
+
+                echo "===== ROLLBACK DONE ====="
