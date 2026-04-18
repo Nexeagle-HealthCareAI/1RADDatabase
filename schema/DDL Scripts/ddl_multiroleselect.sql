@@ -1,42 +1,98 @@
 -- 1Rad Hub: Multi-Role Schema Upgrade
 -- This script refactors UserHospitalMappings to support multiple roles per user per hospital.
+BEGIN TRY
+    BEGIN TRANSACTION;
 
-BEGIN TRANSACTION;
+    /* =========================================================
+       1. Create UserHospitalRoles only if it does not already exist
+       ========================================================= */
+    IF OBJECT_ID(N'[dbo].[UserHospitalRoles]', N'U') IS NULL
+    BEGIN
+        CREATE TABLE [dbo].[UserHospitalRoles] (
+            [MappingId] UNIQUEIDENTIFIER NOT NULL,
+            [RoleId] INT NOT NULL,
+            [AssignedAt] DATETIME NOT NULL 
+                CONSTRAINT [DF_UserHospitalRoles_AssignedAt] DEFAULT GETUTCDATE(),
 
--- 1. Create the new Junction Table for Multi-Role Support
-CREATE TABLE [dbo].[UserHospitalRoles] (
-    [MappingId] UNIQUEIDENTIFIER NOT NULL,
-    [RoleId] INT NOT NULL,
-    [AssignedAt] DATETIME NOT NULL DEFAULT GETUTCDATE(),
-    CONSTRAINT [PK_UserHospitalRoles] PRIMARY KEY CLUSTERED ([MappingId], [RoleId]),
-    CONSTRAINT [FK_UserHospitalRoles_UserHospitalMappings] FOREIGN KEY ([MappingId]) REFERENCES [dbo].[UserHospitalMappings]([MappingId]) ON DELETE CASCADE,
-    CONSTRAINT [FK_UserHospitalRoles_Roles] FOREIGN KEY ([RoleId]) REFERENCES [dbo].[Roles]([RoleId])
-);
+            CONSTRAINT [PK_UserHospitalRoles] 
+                PRIMARY KEY CLUSTERED ([MappingId], [RoleId]),
 
--- 2. Migrate Existing Data
--- Map current single RoleId to the new junction table
-INSERT INTO [dbo].[UserHospitalRoles] ([MappingId], [RoleId], [AssignedAt])
-SELECT [MappingId], [RoleId], [AssignedAt]
-FROM [dbo].[UserHospitalMappings]
-WHERE [RoleId] IS NOT NULL;
+            CONSTRAINT [FK_UserHospitalRoles_UserHospitalMappings] 
+                FOREIGN KEY ([MappingId]) 
+                REFERENCES [dbo].[UserHospitalMappings]([MappingId]) 
+                ON DELETE CASCADE,
 
--- 3. Cleanup UserHospitalMappings
--- Dynamically find and drop the Foreign Key constraint for RoleId
-DECLARE @ConstraintName nvarchar(200)
-SELECT @ConstraintName = name
-FROM sys.foreign_keys
-WHERE parent_object_id = OBJECT_ID('dbo.UserHospitalMappings')
-AND referenced_object_id = OBJECT_ID('dbo.Roles');
+            CONSTRAINT [FK_UserHospitalRoles_Roles] 
+                FOREIGN KEY ([RoleId]) 
+                REFERENCES [dbo].[Roles]([RoleId])
+        );
+    END
 
-IF @ConstraintName IS NOT NULL
-BEGIN
-    EXEC('ALTER TABLE [dbo].[UserHospitalMappings] DROP CONSTRAINT ' + @ConstraintName)
-END
+    /* =========================================================
+       2. Migrate existing RoleId data only if:
+          - source column still exists
+          - and row not already migrated
+       ========================================================= */
+    IF EXISTS (
+        SELECT 1
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(N'[dbo].[UserHospitalMappings]')
+          AND name = 'RoleId'
+    )
+    BEGIN
+        INSERT INTO [dbo].[UserHospitalRoles] ([MappingId], [RoleId], [AssignedAt])
+        SELECT 
+            UHM.[MappingId],
+            UHM.[RoleId],
+            ISNULL(UHM.[AssignedAt], GETUTCDATE())
+        FROM [dbo].[UserHospitalMappings] UHM
+        WHERE UHM.[RoleId] IS NOT NULL
+          AND NOT EXISTS (
+                SELECT 1
+                FROM [dbo].[UserHospitalRoles] UHR
+                WHERE UHR.[MappingId] = UHM.[MappingId]
+                  AND UHR.[RoleId] = UHM.[RoleId]
+          );
+    END
 
--- Drop the column
-ALTER TABLE [dbo].[UserHospitalMappings] DROP COLUMN [RoleId];
+    /* =========================================================
+       3. Drop FK and RoleId column only if RoleId still exists
+       ========================================================= */
+    IF EXISTS (
+        SELECT 1
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(N'[dbo].[UserHospitalMappings]')
+          AND name = 'RoleId'
+    )
+    BEGIN
+        DECLARE @ConstraintName NVARCHAR(200);
 
-COMMIT;
+        SELECT TOP 1 @ConstraintName = fk.name
+        FROM sys.foreign_keys fk
+        INNER JOIN sys.foreign_key_columns fkc
+            ON fk.object_id = fkc.constraint_object_id
+        INNER JOIN sys.columns c
+            ON c.object_id = fkc.parent_object_id
+           AND c.column_id = fkc.parent_column_id
+        WHERE fk.parent_object_id = OBJECT_ID(N'[dbo].[UserHospitalMappings]')
+          AND c.name = 'RoleId';
+
+        IF @ConstraintName IS NOT NULL
+        BEGIN
+            EXEC(N'ALTER TABLE [dbo].[UserHospitalMappings] DROP CONSTRAINT [' + @ConstraintName + ']');
+        END
+
+        ALTER TABLE [dbo].[UserHospitalMappings] DROP COLUMN [RoleId];
+    END
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    THROW;
+END CATCH;
 
 
 -- SQL Migration Script for Hospital Metadata Fields
