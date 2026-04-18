@@ -52,7 +52,21 @@ BEGIN
     ALTER TABLE [dbo].[Hospitals] ALTER COLUMN [GSTIN] nvarchar(15) NULL;
 END
 GO
-
+IF NOT EXISTS (
+        SELECT 1 FROM sys.columns 
+        WHERE object_id = OBJECT_ID(N'[dbo].[OTPVerifications]') 
+        AND name = 'Purpose'
+    )
+    BEGIN
+        ALTER TABLE [dbo].[OTPVerifications] 
+        ADD [Purpose] NVARCHAR(50) NOT NULL DEFAULT 'Authentication';
+        
+        PRINT 'Added column [Purpose] to [OTPVerifications].';
+    END
+    ELSE
+    BEGIN
+        PRINT 'Column [Purpose] already exists in [OTPVerifications].';
+    END
 
 
 
