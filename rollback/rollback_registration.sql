@@ -43,3 +43,29 @@ BEGIN
     DROP TABLE dbo.HospitalGroups;
 END
 GO
+
+IF EXISTS (
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'[dbo].[Users]')
+      AND name = 'Status'
+)
+BEGIN
+    DECLARE @ConstraintName NVARCHAR(200);
+
+    SELECT @ConstraintName = dc.name
+    FROM sys.default_constraints dc
+    INNER JOIN sys.columns c
+        ON c.default_object_id = dc.object_id
+    WHERE dc.parent_object_id = OBJECT_ID(N'[dbo].[Users]')
+      AND c.name = 'Status';
+
+    IF @ConstraintName IS NOT NULL
+    BEGIN
+        EXEC('ALTER TABLE [dbo].[Users] DROP CONSTRAINT [' + @ConstraintName + ']');
+    END
+
+    ALTER TABLE [dbo].[Users]
+    DROP COLUMN [Status];
+END
+GO
