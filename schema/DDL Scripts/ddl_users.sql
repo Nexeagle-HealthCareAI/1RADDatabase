@@ -9,12 +9,19 @@ BEGIN
 END
 GO
 
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'IsVerified')
+BEGIN
+    ALTER TABLE [dbo].[Users] ADD [IsVerified] BIT NOT NULL DEFAULT 0;
+    PRINT 'Added column [IsVerified] to [Users].';
+END
+
 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'Specialization')
 BEGIN
     ALTER TABLE [dbo].[Users] 
     ADD [Specialization] NVARCHAR(500) NULL,
         [Degree] NVARCHAR(255) NULL,
         [LicenseNo] NVARCHAR(100) NULL;
+    PRINT 'Added clinical metadata columns to [Users].';
 END
 GO
 
