@@ -153,3 +153,21 @@ BEGIN
     );
 END
 GO
+
+-- Refresh Tokens Table
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID(N'[dbo].[RefreshTokens]'))
+BEGIN
+    CREATE TABLE [dbo].[RefreshTokens] (
+        [Id] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+        [UserId] UNIQUEIDENTIFIER NOT NULL,
+        [Token] NVARCHAR(500) NOT NULL,
+        [ExpiresAt] DATETIME NOT NULL,
+        [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL,
+        [CreatedByIp] NVARCHAR(100) NULL,
+        [RevokedAt] DATETIME NULL,
+        [RevokedByIp] NVARCHAR(100) NULL,
+        [ReplacedByToken] NVARCHAR(500) NULL,
+        CONSTRAINT [FK_RefreshTokens_Users] FOREIGN KEY ([UserId]) REFERENCES [dbo].[Users] ([UserId])
+    );
+END
+GO
