@@ -135,39 +135,4 @@ END
 GO
 
 /* =========================================================
-   6. OTPVerifications
-   ========================================================= */
-IF OBJECT_ID('dbo.OTPVerifications', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.OTPVerifications
-    (
-        Id UNIQUEIDENTIFIER NOT NULL
-            CONSTRAINT PK_OTPVerifications PRIMARY KEY
-            CONSTRAINT DF_OTPVerifications_Id DEFAULT NEWID(),
-
-        Identifier NVARCHAR(100) NOT NULL,
-        CodeHash NVARCHAR(MAX) NOT NULL,
-        ExpiresAt DATETIME2 NOT NULL,
-        IsUsed BIT NOT NULL
-            CONSTRAINT DF_OTPVerifications_IsUsed DEFAULT 0
-    );
-END
-GO
-
--- Refresh Tokens Table
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID(N'[dbo].[RefreshTokens]'))
-BEGIN
-    CREATE TABLE [dbo].[RefreshTokens] (
-        [Id] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-        [UserId] UNIQUEIDENTIFIER NOT NULL,
-        [Token] NVARCHAR(500) NOT NULL,
-        [ExpiresAt] DATETIME NOT NULL,
-        [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL,
-        [CreatedByIp] NVARCHAR(100) NULL,
-        [RevokedAt] DATETIME NULL,
-        [RevokedByIp] NVARCHAR(100) NULL,
-        [ReplacedByToken] NVARCHAR(500) NULL,
-        CONSTRAINT [FK_RefreshTokens_Users] FOREIGN KEY ([UserId]) REFERENCES [dbo].[Users] ([UserId])
-    );
-END
-GO
+   
