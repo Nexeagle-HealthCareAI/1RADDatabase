@@ -1,6 +1,6 @@
 /* =========================================================
    1Rad / Clinical Command Hub
-   Master Create Script
+   Master Create Script (v2.0 - Many-to-Many Roles & Mission Control)
    SQL Server / T-SQL
    ========================================================= */
 
@@ -42,7 +42,10 @@ BEGIN
         GroupId UNIQUEIDENTIFIER NULL,
         HospitalName NVARCHAR(255) NOT NULL,
         HospitalAddress NVARCHAR(MAX) NOT NULL,
-        GSTIN NVARCHAR(50) NULL,
+        GSTIN NVARCHAR(15) NULL,
+        RegistrationNumber NVARCHAR(100) NULL,
+        PAN NVARCHAR(10) NULL,
+        NABHNumber NVARCHAR(100) NULL,
         [Status] NVARCHAR(20) NOT NULL
             CONSTRAINT DF_Hospitals_Status DEFAULT 'Active',
 
@@ -73,6 +76,11 @@ BEGIN
         PasswordHash NVARCHAR(MAX) NOT NULL,
         IsVerified BIT NOT NULL
             CONSTRAINT DF_Users_IsVerified DEFAULT 0,
+        [Status] NVARCHAR(50) NOT NULL
+            CONSTRAINT DF_Users_Status DEFAULT 'Pending',
+        Specialization NVARCHAR(500) NULL,
+        Degree NVARCHAR(255) NULL,
+        LicenseNo NVARCHAR(100) NULL,
 
         CreatedAt DATETIME2 NOT NULL
             CONSTRAINT DF_Users_CreatedAt DEFAULT GETUTCDATE(),
@@ -99,7 +107,7 @@ END
 GO
 
 /* =========================================================
-   5. UserHospitalMappings
+   5. UserHospitalMappings (Many-to-Many Bridge)
    ========================================================= */
 IF OBJECT_ID('dbo.UserHospitalMappings', 'U') IS NULL
 BEGIN
@@ -111,7 +119,6 @@ BEGIN
 
         UserId UNIQUEIDENTIFIER NOT NULL,
         HospitalId UNIQUEIDENTIFIER NOT NULL,
-        RoleId INT NOT NULL,
 
         IsDefault BIT NOT NULL
             CONSTRAINT DF_UserHospitalMappings_IsDefault DEFAULT 0,
@@ -127,38 +134,126 @@ BEGIN
             FOREIGN KEY (HospitalId)
             REFERENCES dbo.Hospitals(HospitalId),
 
-        CONSTRAINT FK_UserHospitalMappings_Roles
-            FOREIGN KEY (RoleId)
+        CONSTRAINT UQ_User_Hospital UNIQUE (UserId, HospitalId)
+    );
+END
+GO
+
+/* =========================================================
+   6. UserHospitalRoles (Role Assignment Bridge)
+   ========================================================= */
+IF OBJECT_ID('dbo.UserHospitalRoles', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.UserHospitalRoles
+    (
+        MappingId UNIQUEIDENTIFIER NOT NULL,
+        RoleId INT NOT NULL,
+        AssignedAt DATETIME NOT NULL 
+            CONSTRAINT DF_UserHospitalRoles_AssignedAt DEFAULT GETUTCDATE(),
+
+        CONSTRAINT PK_UserHospitalRoles 
+            PRIMARY KEY CLUSTERED (MappingId, RoleId),
+
+        CONSTRAINT FK_UserHospitalRoles_UserHospitalMappings 
+            FOREIGN KEY (MappingId) 
+            REFERENCES dbo.UserHospitalMappings(MappingId) 
+            ON DELETE CASCADE,
+
+        CONSTRAINT FK_UserHospitalRoles_Roles 
+            FOREIGN KEY (RoleId) 
             REFERENCES dbo.Roles(RoleId)
     );
 END
 GO
 
 /* =========================================================
-   6. OTPVerifications
+   7. Patients Table
    ========================================================= */
-IF OBJECT_ID('dbo.OTPVerifications', 'U') IS NULL
+IF OBJECT_ID('dbo.Patients', 'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.OTPVerifications
-    (
-        Id UNIQUEIDENTIFIER NOT NULL
-            CONSTRAINT PK_OTPVerifications PRIMARY KEY
-            CONSTRAINT DF_OTPVerifications_Id DEFAULT NEWID(),
-
-        Identifier NVARCHAR(100) NOT NULL,
-        CodeHash NVARCHAR(MAX) NOT NULL,
-        ExpiresAt DATETIME2 NOT NULL,
-        IsUsed BIT NOT NULL
-            CONSTRAINT DF_OTPVerifications_IsUsed DEFAULT 0
+    CREATE TABLE dbo.Patients (
+        [PatientId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY CONSTRAINT [DF_Patients_PatientId] DEFAULT NEWID(),
+        [FullName] NVARCHAR(255) NOT NULL,
+        [Mobile] NVARCHAR(20) NULL,
+        [Age] NVARCHAR(20) NULL,
+        [Gender] NVARCHAR(50) NULL,
+        [Village] NVARCHAR(MAX) NULL,
+        [District] NVARCHAR(MAX) NULL,
+        [Address] NVARCHAR(MAX) NULL,
+        [PatientIdentifier] NVARCHAR(50) NOT NULL, -- PTIDXXXXXXXX
+        [SourceOfInfo] NVARCHAR(MAX) NULL,
+        [HospitalId] UNIQUEIDENTIFIER NOT NULL,
+        [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL,
+        CONSTRAINT [FK_Patients_Hospitals] FOREIGN KEY ([HospitalId]) REFERENCES [dbo].[Hospitals] ([HospitalId])
     );
 END
 GO
 
--- Refresh Tokens Table
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE object_id = OBJECT_ID(N'[dbo].[RefreshTokens]'))
+/* =========================================================
+   8. Referrers & Appointments
+   ========================================================= */
+
+IF OBJECT_ID('dbo.Referrers', 'U') IS NULL
 BEGIN
-    CREATE TABLE [dbo].[RefreshTokens] (
-        [Id] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    CREATE TABLE dbo.Referrers (
+        [ReferrerId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY CONSTRAINT [DF_Referrers_ReferrerId] DEFAULT NEWID(),
+        [Name] NVARCHAR(255) NOT NULL,
+        [Contact] NVARCHAR(20) NULL,
+        [Address] NVARCHAR(MAX) NULL,
+        [HospitalId] UNIQUEIDENTIFIER NOT NULL,
+        [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL,
+        CONSTRAINT [FK_Referrers_Hospitals] FOREIGN KEY ([HospitalId]) REFERENCES [dbo].[Hospitals] ([HospitalId])
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.Appointments', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Appointments (
+        [AppointmentId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY CONSTRAINT [DF_Appointments_AppointmentId] DEFAULT NEWID(),
+        [DisplayId] NVARCHAR(50) NOT NULL,
+        [PatientId] UNIQUEIDENTIFIER NOT NULL,
+        [PatientName] NVARCHAR(255) NOT NULL,
+        [Mobile] NVARCHAR(20) NULL,
+        [Service] NVARCHAR(255) NOT NULL,
+        [Modality] NVARCHAR(50) NOT NULL,
+        [DateTime] DATETIME NOT NULL,
+        [Type] NVARCHAR(50) NOT NULL,
+        [Doctor] NVARCHAR(255) NULL,
+        [Status] NVARCHAR(50) NOT NULL,
+        [ReferredBy] NVARCHAR(255) NULL,
+        [ReferredContact] NVARCHAR(50) NULL,
+        [Notes] NVARCHAR(MAX) NULL,
+        [HospitalId] UNIQUEIDENTIFIER NOT NULL,
+        [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL,
+        CONSTRAINT [FK_Appointments_Patients] FOREIGN KEY ([PatientId]) REFERENCES [dbo].[Patients] ([PatientId]),
+        CONSTRAINT [FK_Appointments_Hospitals] FOREIGN KEY ([HospitalId]) REFERENCES [dbo].[Hospitals] ([HospitalId])
+    );
+END
+GO
+
+/* =========================================================
+   9. Security Infrastructure
+   ========================================================= */
+
+IF OBJECT_ID('dbo.OTPVerifications', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.OTPVerifications (
+        [Id] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY CONSTRAINT [DF_OTPVerifications_Id] DEFAULT NEWID(),
+        [Identifier] NVARCHAR(100) NOT NULL,
+        [CodeHash] NVARCHAR(MAX) NOT NULL,
+        [Purpose] NVARCHAR(MAX) NULL,
+        [ExpiresAt] DATETIME2 NOT NULL,
+        [IsUsed] BIT NOT NULL CONSTRAINT DF_OTPVerifications_IsUsed DEFAULT 0,
+        [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.RefreshTokens', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.RefreshTokens (
+        [Id] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY CONSTRAINT [DF_RefreshTokens_Id] DEFAULT NEWID(),
         [UserId] UNIQUEIDENTIFIER NOT NULL,
         [Token] NVARCHAR(500) NOT NULL,
         [ExpiresAt] DATETIME NOT NULL,

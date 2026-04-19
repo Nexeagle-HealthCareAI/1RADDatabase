@@ -1,20 +1,25 @@
-# Introduction 
-TODO: Give a short introduction of your project. Let this section explain the objectives or the motivation behind this project. 
+# 1Rad Clinical Hub: Database Project
 
-# Getting Started
-TODO: Guide users through getting your code up and running on their own system. In this section you can talk about:
-1.	Installation process
-2.	Software dependencies
-3.	Latest releases
-4.	API references
+## Overview
+This project contains the master schema and DDL/DML scripts for the 1Rad Clinical Hub database. It supports a multi-facility environment with advanced identity management and clinical mission control features.
 
-# Build and Test
-TODO: Describe and show how to build your code and run the tests. 
+## Project Structure
+- **/schema**: Core DDL scripts for baseline creation and ongoing migrations.
+  - `registration.sql`: Master Master Create Script (v2.0) for new environments.
+  - **/DDL Scripts**: Specific incremental updates (Users, Roles, Missions).
+- **/data**: DML scripts for seeding lookup tables and system roles.
+- **/rollback**: Inversion scripts for safe schema reversion and disaster recovery.
 
-# Contribute
-TODO: Explain how other users and developers can contribute to make your code better. 
+## Key Architecture Features
+1. **Multi-Role Authorization**: Uses a many-to-many bridge (`UserHospitalRoles`) between staff mappings and roles.
+2. **Mission Command Hub**: Unified schema for `Patients` (with sequential `PTID`), `Referrers`, and `Appointments`.
+3. **Security Persistence**: Built-in support for `OTPVerifications` and `RefreshTokens`.
+4. **Clinical Context**: Extended metadata for hospital registration (PAN, GSTIN) and user credentials (License, Degree).
 
-If you want to learn more about creating good readme files then refer the following [guidelines](https://docs.microsoft.com/en-us/azure/devops/repos/git/create-a-readme?view=azure-devops). You can also seek inspiration from the below readme files:
-- [ASP.NET Core](https://github.com/aspnet/Home)
-- [Visual Studio Code](https://github.com/Microsoft/vscode)
-- [Chakra Core](https://github.com/Microsoft/ChakraCore)
+## Getting Started
+To provision a new database:
+1. Execute `schema/registration.sql` to build the core infrastructure.
+2. Execute `data/dml_userroles.sql` to seed the clinical roles.
+
+## Maintenance & Recovery
+Always use the corresponding script in the `/rollback` directory before attempting to re-run a DDL script that has failed or needs adjustment.
