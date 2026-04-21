@@ -46,6 +46,8 @@ BEGIN
         RegistrationNumber NVARCHAR(100) NULL,
         PAN NVARCHAR(10) NULL,
         NABHNumber NVARCHAR(100) NULL,
+        IsAutoBillingEnabled BIT NOT NULL
+            CONSTRAINT DF_Hospitals_IsAutoBillingEnabled DEFAULT 0,
         [Status] NVARCHAR(20) NOT NULL
             CONSTRAINT DF_Hospitals_Status DEFAULT 'Active',
 
