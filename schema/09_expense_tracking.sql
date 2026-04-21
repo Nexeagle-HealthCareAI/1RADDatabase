@@ -20,12 +20,19 @@ BEGIN
         [Description] NVARCHAR(MAX) NOT NULL,
         [Category] NVARCHAR(100) NOT NULL, -- e.g., Maintenance, Staff, Utilities, Reagents
         [Amount] DECIMAL(18, 2) NOT NULL,
+        [TaxAmount] DECIMAL(18, 2) DEFAULT 0 NOT NULL,
+        [PaymentMode] NVARCHAR(50) NULL, -- e.g., Cash, UPI, Bank Transfer
+        [ReferenceNumber] NVARCHAR(100) NULL, -- e.g., Bill No, Transaction ID
+        [VendorName] NVARCHAR(200) NULL,
+        [CostCenter] NVARCHAR(100) NULL, -- e.g., Radiology, Lab, OPD, Pharmacy
+        [Status] NVARCHAR(50) DEFAULT 'Paid' NOT NULL, -- Draft, Pending, Approved, Paid
         [HospitalId] UNIQUEIDENTIFIER NOT NULL,
+        [TransactionDate] DATETIME NOT NULL DEFAULT GETUTCDATE(),
         [CreatedAt] DATETIME DEFAULT GETUTCDATE() NOT NULL,
         CONSTRAINT [FK_Expenses_Hospitals] FOREIGN KEY ([HospitalId]) REFERENCES [dbo].[Hospitals] ([HospitalId])
     );
 
-    CREATE INDEX [IX_Expenses_HospitalId_Date] ON dbo.Expenses ([HospitalId], [CreatedAt]);
+    CREATE INDEX [IX_Expenses_HospitalId_Audit] ON dbo.Expenses ([HospitalId], [TransactionDate], [CostCenter]);
 END
 
 COMMIT;
