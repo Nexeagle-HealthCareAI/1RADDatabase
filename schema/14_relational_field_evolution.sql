@@ -3,8 +3,8 @@
   Objective: Relational Field Evolution for Structured Diagnostic Reporting
 */
 
-USE [oneRadDB];
-GO
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON
 
 -- 1. Create the DiagnosticReportFields table to handle dynamic structured fields
 -- This replaces the need for packing multiple fields into a single JSON Findings string
