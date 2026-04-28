@@ -3,7 +3,8 @@
   Objective: Implement Persistent Reporting Paradigms (Structured vs. Narrative)
 */
 
-USE [oneRadDB];
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
 GO
 
 -- 1. Update DiagnosticReports table to track report methodology
