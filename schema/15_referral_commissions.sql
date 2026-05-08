@@ -19,6 +19,7 @@ BEGIN
         [Id] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY CONSTRAINT [DF_ReferralCommissions_Id] DEFAULT NEWID(),
         [ReferrerId] UNIQUEIDENTIFIER NOT NULL,
         [ReferrerName] NVARCHAR(255) NOT NULL,
+        [Modality] NVARCHAR(50) NULL,
         [CommissionAmount] DECIMAL(18, 2) NOT NULL,
         [AccumulatedTotal] DECIMAL(18, 2) NOT NULL,
         [Status] NVARCHAR(50) DEFAULT 'Pending' NOT NULL, -- Pending, Paid, Cancelled
