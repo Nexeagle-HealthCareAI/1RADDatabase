@@ -12,6 +12,7 @@ BEGIN
         [FontColor] NVARCHAR(50) NOT NULL DEFAULT '#1e293b',
         [FontFamily] NVARCHAR(100) NOT NULL DEFAULT 'Inter',
         [LetterheadBlobUrl] NVARCHAR(MAX) NULL,
+        [OverflowBackgroundMode] NVARCHAR(50) NOT NULL DEFAULT 'REUSE',
         [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         [UpdatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         
