@@ -1,6 +1,6 @@
 /* =========================================================
    1Rad / Finance Hub Evolution
-   DDL Script: Service Registry Referral Incentive Schema
+   DDL Script: Invoice Referral Synchronization
    SQL Server / T-SQL
    ========================================================= */
 
@@ -11,20 +11,19 @@ GO
 BEGIN TRANSACTION;
 
 /* =========================================================
-   1. Evolution of dbo.ServiceCharges
+   1. Evolution of dbo.Invoices
    Adding ReferralCutType and ReferralCutValue
    ========================================================= */
 
-IF OBJECT_ID('dbo.ServiceCharges', 'U') IS NOT NULL
+IF OBJECT_ID('dbo.Invoices', 'U') IS NOT NULL
 BEGIN
     -- Add ReferralCutValue if not exists
-    IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.ServiceCharges') AND name = 'ReferralCutValue')
+    IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Invoices') AND name = 'ReferralCutValue')
     BEGIN
-        ALTER TABLE dbo.ServiceCharges
+        ALTER TABLE dbo.Invoices
         ADD [ReferralCutValue] DECIMAL(18, 2) DEFAULT 0 NOT NULL;
     END
 END
-
 
 
 COMMIT;
