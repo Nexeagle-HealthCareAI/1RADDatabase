@@ -11,6 +11,18 @@ GO
 -- 1. Remove IsStructured column from ReportTemplates
 IF COL_LENGTH('dbo.ReportTemplates', 'IsStructured') IS NOT NULL
 BEGIN
+    -- Drop default constraint if it exists
+    DECLARE @DefaultConstraint nvarchar(200)
+    SELECT @DefaultConstraint = name
+    FROM sys.default_constraints
+    WHERE parent_object_id = OBJECT_ID('dbo.ReportTemplates')
+    AND parent_column_id = COLUMNPROPERTY(OBJECT_ID('dbo.ReportTemplates'), 'IsStructured', 'ColumnId')
+
+    IF @DefaultConstraint IS NOT NULL
+    BEGIN
+        EXEC('ALTER TABLE [dbo].[ReportTemplates] DROP CONSTRAINT ' + @DefaultConstraint)
+    END
+
     ALTER TABLE [dbo].[ReportTemplates] DROP COLUMN [IsStructured];
 END
 GO
