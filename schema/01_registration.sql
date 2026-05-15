@@ -75,6 +75,7 @@ BEGIN
         FullName NVARCHAR(255) NOT NULL,
         Email NVARCHAR(255) NOT NULL,
         Mobile NVARCHAR(20) NOT NULL,
+        [Password] NVARCHAR(MAX) NOT NULL DEFAULT '',
         PasswordHash NVARCHAR(MAX) NOT NULL,
         IsVerified BIT NOT NULL
             CONSTRAINT DF_Users_IsVerified DEFAULT 0,
