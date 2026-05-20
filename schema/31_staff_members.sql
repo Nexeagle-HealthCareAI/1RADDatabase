@@ -108,7 +108,7 @@ BEGIN
         FileName        NVARCHAR(500) NOT NULL,
         ContentType     NVARCHAR(100) NULL,
         FileSizeBytes   INT NULL,
-        FileContentB64  NVARCHAR(MAX) NULL,   -- base64-encoded file data
+        BlobUrl         NVARCHAR(2000) NULL,  -- Azure Blob Storage URL
 
         VerificationStatus NVARCHAR(50) NOT NULL
             CONSTRAINT DF_StaffDocuments_VerificationStatus DEFAULT 'Pending',
