@@ -171,7 +171,7 @@ BEGIN
         CONSTRAINT FK_SalaryDisbursements_Revision
             FOREIGN KEY (RevisionId)
             REFERENCES dbo.SalaryRevisions(RevisionId)
-            ON DELETE SET NULL
+            ON DELETE NO ACTION
     );
     PRINT 'Created table dbo.SalaryDisbursements';
 END
