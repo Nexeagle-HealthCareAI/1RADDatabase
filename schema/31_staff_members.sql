@@ -2,9 +2,7 @@
    31 - Staff Members (HR Records)
    
    Separates HR staff records from board user accounts.
-   A staff member can exist without board login access.
-   Board access is granted separately via the Access tab,
-   which links a StaffMember to a User account.
+   A staff member can exist without a board login.
    ========================================================= */
 
 /* ---------------------------------------------------------
@@ -38,20 +36,13 @@ BEGIN
         [Status] NVARCHAR(50) NOT NULL
             CONSTRAINT DF_StaffMembers_Status DEFAULT 'Active',
 
-        -- Nullable link to a board login account (set when board access is granted)
-        BoardAccessUserId UNIQUEIDENTIFIER NULL,
-
         CreatedAt DATETIME2 NOT NULL
             CONSTRAINT DF_StaffMembers_CreatedAt DEFAULT GETUTCDATE(),
         UpdatedAt DATETIME2 NULL,
 
         CONSTRAINT FK_StaffMembers_Hospitals
             FOREIGN KEY (HospitalId)
-            REFERENCES dbo.Hospitals(HospitalId),
-
-        CONSTRAINT FK_StaffMembers_BoardUser
-            FOREIGN KEY (BoardAccessUserId)
-            REFERENCES dbo.Users(UserId)
+            REFERENCES dbo.Hospitals(HospitalId)
     );
     PRINT 'Created table dbo.StaffMembers';
 END
