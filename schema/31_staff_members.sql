@@ -100,6 +100,8 @@ BEGIN
         ContentType     NVARCHAR(100) NULL,
         FileSizeBytes   INT NULL,
         BlobUrl         NVARCHAR(2000) NULL,  -- Azure Blob Storage URL
+        BlobPath        NVARCHAR(500)  NULL,  -- Relative path inside the container (e.g. "hospital/staff/doc_file.pdf")
+        BlobContainer   NVARCHAR(100)  NULL,  -- Container name (defaults to "staff-documents")
 
         VerificationStatus NVARCHAR(50) NOT NULL
             CONSTRAINT DF_StaffDocuments_VerificationStatus DEFAULT 'Pending',
