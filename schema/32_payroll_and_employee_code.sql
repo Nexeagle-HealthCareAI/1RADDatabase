@@ -7,6 +7,12 @@
    disbursements with payment metadata).
    ========================================================= */
 
+-- Required for the filtered unique index on EmployeeCode (SQL Server rule).
+-- Must be set at the start of the batch, before any CREATE INDEX with a WHERE clause.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 /* ---------------------------------------------------------
    1. StaffMembers.EmployeeCode — human-readable HR code
       Format: "EMP-NNNN" (4-digit, padded). Unique per hospital.
