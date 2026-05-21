@@ -36,6 +36,10 @@ BEGIN
         [Status] NVARCHAR(50) NOT NULL
             CONSTRAINT DF_StaffMembers_Status DEFAULT 'Active',
 
+        -- Profile photo (stored in staff-documents container)
+        PhotoUrl  NVARCHAR(2000) NULL,
+        PhotoPath NVARCHAR(500)  NULL,
+
         CreatedAt DATETIME2 NOT NULL
             CONSTRAINT DF_StaffMembers_CreatedAt DEFAULT GETUTCDATE(),
         UpdatedAt DATETIME2 NULL,
