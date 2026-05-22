@@ -4,8 +4,7 @@
    SQL Server / T-SQL
    ========================================================= */
 
-SET ANSI_NULLS ON;
-SET QUOTED_IDENTIFIER ON;
+
 GO
 
 IF OBJECT_ID('dbo.SubscriptionPaymentRequests', 'U') IS NULL
