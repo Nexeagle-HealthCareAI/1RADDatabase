@@ -7,54 +7,56 @@ pr: none
 
 parameters:
   - name: action
-    displayName: Action
+    displayName: Action (applies to Dev and Prod)
     type: string
     default: deploy
     values:
       - deploy
       - rollback
+  - name: deployToProd
+    displayName: Promote to Production after Dev succeeds?
+    type: boolean
+    default: false
 
 pool:
   vmImage: ubuntu-latest
 
-variables:
-  - group: sql-dev-secrets
-
 stages:
+  # ────────────────────────────────────────────────────────────────────────
+  # Stage 1 — Dev
+  # Auto-runs on every push to main. No approval gate.
+  # ────────────────────────────────────────────────────────────────────────
   - stage: DevDB
-    displayName: Dev DB Deployment
+    displayName: Dev DB
+    variables:
+      - group: sql-dev-secrets
     jobs:
       - job: RunSQL
+        timeoutInMinutes: 60
         steps:
           - checkout: self
 
-          # Install sqlcmd
           - task: Bash@3
             displayName: Install sqlcmd
             inputs:
               targetType: inline
               script: |
                 set -e
-
                 curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
                 curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
                 sudo apt-get update
                 sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
-
                 echo '##vso[task.prependpath]/opt/mssql-tools18/bin'
 
-          # Deploy
           - task: Bash@3
-            displayName: Deploy DB
+            displayName: Deploy DB (Dev)
             condition: eq('${{ parameters.action }}', 'deploy')
             inputs:
               targetType: inline
               script: |
                 set -e
+                echo "===== DEV DEPLOY START ====="
 
-                echo "===== DEPLOY START ====="
-
-                # SCHEMA (recursive)
                 echo "Running schema scripts..."
                 find schema -type f -name "*.sql" | sort | while IFS= read -r file
                 do
@@ -66,7 +68,6 @@ stages:
                          -C -b -i "$file"
                 done
 
-                # DATA
                 echo "Running data scripts..."
                 find data -type f -name "*.sql" | sort | while IFS= read -r file
                 do
@@ -78,19 +79,16 @@ stages:
                          -C -b -i "$file"
                 done
 
-                echo "===== DEPLOY DONE ====="
+                echo "===== DEV DEPLOY DONE ====="
 
-          # ROLLBACK
           - task: Bash@3
-            displayName: Rollback DB
+            displayName: Rollback DB (Dev)
             condition: eq('${{ parameters.action }}', 'rollback')
             inputs:
               targetType: inline
               script: |
                 set -e
-
-                echo "===== ROLLBACK START ====="
-
+                echo "===== DEV ROLLBACK START ====="
                 find rollback -type f -name "*.sql" | sort -r | while IFS= read -r file
                 do
                   echo "Executing: $file"
@@ -100,5 +98,105 @@ stages:
                          -P "$(SqlPassword)" \
                          -C -b -i "$file"
                 done
+                echo "===== DEV ROLLBACK DONE ====="
 
-                echo "===== ROLLBACK DONE ====="
+  # ────────────────────────────────────────────────────────────────────────
+  # Stage 2 — Prod
+  # Runs ONLY when:
+  #   (1) Dev stage succeeded
+  #   (2) The operator queued the run with deployToProd: true
+  #   (3) An approver clicks Approve on the 'Production-DB' environment.
+  #
+  # Approval is configured in Azure DevOps → Pipelines → Environments →
+  # Production-DB → Approvals and checks. The environment reference below
+  # is what binds the approval to this stage.
+  # ────────────────────────────────────────────────────────────────────────
+  - stage: ProdDB
+    displayName: Prod DB
+    dependsOn: DevDB
+    condition: and(succeeded(), eq('${{ parameters.deployToProd }}', true))
+    variables:
+      - group: sql-prod-secrets
+    jobs:
+      - deployment: DeployProd
+        environment: 'Production-DB'
+        timeoutInMinutes: 180
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: Bash@3
+                  displayName: Install sqlcmd
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -e
+                      curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+                      curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+                      sudo apt-get update
+                      sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+                      echo '##vso[task.prependpath]/opt/mssql-tools18/bin'
+
+                - task: Bash@3
+                  displayName: Deploy DB (Prod)
+                  condition: eq('${{ parameters.action }}', 'deploy')
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -e
+                      echo "===== PROD DEPLOY START ====="
+                      echo "Target server: $(SqlServer)"
+                      echo "Target database: $(DatabaseName)"
+                      echo "Commit: $(Build.SourceVersion)"
+                      echo "Queued by: $(Build.RequestedFor)"
+
+                      echo "Running schema scripts..."
+                      find schema -type f -name "*.sql" | sort | while IFS= read -r file
+                      do
+                        echo "Executing: $file"
+                        sqlcmd -S "$(SqlServer)" \
+                               -d "$(DatabaseName)" \
+                               -U "$(SqlUser)" \
+                               -P "$(SqlPassword)" \
+                               -C -b -i "$file"
+                      done
+
+                      echo "Running data scripts..."
+                      find data -type f -name "*.sql" | sort | while IFS= read -r file
+                      do
+                        echo "Executing: $file"
+                        sqlcmd -S "$(SqlServer)" \
+                               -d "$(DatabaseName)" \
+                               -U "$(SqlUser)" \
+                               -P "$(SqlPassword)" \
+                               -C -b -i "$file"
+                      done
+
+                      echo "===== PROD DEPLOY DONE ====="
+
+                - task: Bash@3
+                  displayName: Rollback DB (Prod)
+                  condition: eq('${{ parameters.action }}', 'rollback')
+                  inputs:
+                    targetType: inline
+                    script: |
+                      set -e
+                      echo "===== PROD ROLLBACK START ====="
+                      echo "Target server: $(SqlServer)"
+                      echo "Target database: $(DatabaseName)"
+                      echo "Commit: $(Build.SourceVersion)"
+                      echo "Queued by: $(Build.RequestedFor)"
+
+                      find rollback -type f -name "*.sql" | sort -r | while IFS= read -r file
+                      do
+                        echo "Executing: $file"
+                        sqlcmd -S "$(SqlServer)" \
+                               -d "$(DatabaseName)" \
+                               -U "$(SqlUser)" \
+                               -P "$(SqlPassword)" \
+                               -C -b -i "$file"
+                      done
+
+                      echo "===== PROD ROLLBACK DONE ====="
