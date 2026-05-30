@@ -60,6 +60,14 @@ GO
 -- delivered) need to be considered. A filtered index keeps it small even at
 -- 100k+ rows because >99% of rows fall outside the filter (delivered or never
 -- arrived).
+--
+-- SQL Server requires QUOTED_IDENTIFIER ON for filtered indexes. The DACPAC /
+-- sqlcmd default in CI sessions is OFF, which triggers Msg 1934. Setting it
+-- here scopes the change to this batch only.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 IF NOT EXISTS (
     SELECT * FROM sys.indexes
     WHERE name = 'IX_Appointments_Overdue_Active'
