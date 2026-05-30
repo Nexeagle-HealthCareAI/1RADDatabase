@@ -39,10 +39,20 @@ BEGIN
 END
 GO
 
+-- Appointments now carries a filtered index (IX_Appointments_Overdue_Active
+-- from migration 42). SQL Server requires QUOTED_IDENTIFIER ON for any DML
+-- against tables with filtered indexes; the CI sqlcmd session defaults to
+-- OFF and trips Msg 1934. Setting it in its own batch scopes the change
+-- correctly without leaking into other migration files.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Backfill the cache from the most recent comment for each appointment so
 -- existing rows immediately show "by {name} · {when}". Without this, the
 -- worklist would render empty author info until each appointment receives a
--- fresh comment.
+-- fresh comment. Re-runnable: the WHERE LatestCommentAt IS NULL guard means
+-- a second execution is a no-op if every row was already backfilled.
 IF EXISTS (SELECT * FROM sys.tables WHERE name = 'AppointmentComments')
 BEGIN
     WITH LatestPerAppt AS (
