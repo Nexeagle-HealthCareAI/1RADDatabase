@@ -25,24 +25,27 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE [dbo].[IdempotencyKeys] (
-        -- Composite (UserId, Key) so two users can't collide on the
-        -- same client-generated UUID. UserId is optional (some calls
-        -- are AllowAnonymous — those get a NULL UserId and the key
-        -- alone disambiguates).
-        [Key]              NVARCHAR(80)   NOT NULL,
-        [UserId]           UNIQUEIDENTIFIER NULL,
+        -- Composite (Key, UserId) so two users can't collide on the
+        -- same client-generated UUID. UserId is non-nullable because
+        -- SQL Server forbids NULL columns in a PRIMARY KEY constraint;
+        -- AllowAnonymous calls store the sentinel
+        -- '00000000-0000-0000-0000-000000000000' (handled in
+        -- IdempotencyMiddleware) so the schema stays simple.
+        [Key]                 NVARCHAR(80)     NOT NULL,
+        [UserId]              UNIQUEIDENTIFIER NOT NULL
+            CONSTRAINT [DF_IdempotencyKeys_UserId] DEFAULT ('00000000-0000-0000-0000-000000000000'),
         -- Request fingerprint. We compare on retry so a key reused
         -- against a DIFFERENT endpoint (developer error) doesn't
         -- accidentally replay the wrong response.
-        [Method]           NVARCHAR(10)   NOT NULL,
-        [Path]             NVARCHAR(500)  NOT NULL,
+        [Method]              NVARCHAR(10)     NOT NULL,
+        [Path]                NVARCHAR(500)    NOT NULL,
         -- Captured response. Only success codes (200-299) are cached;
         -- failures are not idempotent so we re-execute on retry.
-        [ResponseStatus]   INT            NOT NULL,
-        [ResponseBody]     NVARCHAR(MAX)  NULL,
-        [ResponseContentType] NVARCHAR(120) NULL,
-        [CreatedAt]        DATETIME2      NOT NULL CONSTRAINT [DF_IdempotencyKeys_CreatedAt] DEFAULT SYSUTCDATETIME(),
-        [ExpiresAt]        DATETIME2      NOT NULL,
+        [ResponseStatus]      INT              NOT NULL,
+        [ResponseBody]        NVARCHAR(MAX)    NULL,
+        [ResponseContentType] NVARCHAR(120)    NULL,
+        [CreatedAt]           DATETIME2        NOT NULL CONSTRAINT [DF_IdempotencyKeys_CreatedAt] DEFAULT SYSUTCDATETIME(),
+        [ExpiresAt]           DATETIME2        NOT NULL,
         CONSTRAINT [PK_IdempotencyKeys] PRIMARY KEY CLUSTERED ([Key], [UserId])
     );
     PRINT 'Table dbo.IdempotencyKeys created.';

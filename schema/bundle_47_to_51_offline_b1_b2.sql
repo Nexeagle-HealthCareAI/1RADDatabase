@@ -152,7 +152,11 @@ IF NOT EXISTS (
 BEGIN
     CREATE TABLE [dbo].[IdempotencyKeys] (
         [Key]                 NVARCHAR(80)     NOT NULL,
-        [UserId]              UNIQUEIDENTIFIER NULL,
+        -- UserId NOT NULL because SQL Server forbids NULL columns in a
+        -- PRIMARY KEY constraint; anonymous callers store the sentinel
+        -- '00000000-...' so the schema stays clean.
+        [UserId]              UNIQUEIDENTIFIER NOT NULL
+            CONSTRAINT [DF_IdempotencyKeys_UserId] DEFAULT ('00000000-0000-0000-0000-000000000000'),
         [Method]              NVARCHAR(10)     NOT NULL,
         [Path]                NVARCHAR(500)    NOT NULL,
         [ResponseStatus]      INT              NOT NULL,
