@@ -25,6 +25,18 @@
 --   AppointmentService row. Sunset migration is queued for later.
 --
 -- Safe to re-run: every step is guarded with IF NOT EXISTS / WHERE NOT EXISTS.
+--
+-- FK delete behaviour notes:
+--   • AppointmentServices → Appointments uses CASCADE so disposing of a
+--     visit also cleans up its child service rows.
+--   • The four child→AppointmentService FKs below use NO ACTION (not
+--     SET NULL). SQL Server's "multiple cascade paths" detector refuses
+--     SET NULL here because of the existing Appointment → child paths
+--     (e.g. Appointment → DiagnosticReport NO ACTION + Appointment →
+--     AppointmentService CASCADE → DiagnosticReport SET NULL). In
+--     practice the SET NULL action would never fire anyway — we
+--     soft-delete service rows by stamping DeletedAt, so an actual
+--     hard DELETE of an AppointmentService is never issued by the app.
 
 SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
@@ -102,7 +114,7 @@ IF NOT EXISTS (
 BEGIN
     ALTER TABLE [dbo].[DiagnosticReports]
         ADD CONSTRAINT [FK_DiagnosticReports_AppointmentServices]
-            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE SET NULL;
+            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE NO ACTION;
 END
 GO
 
@@ -122,7 +134,7 @@ IF NOT EXISTS (
 BEGIN
     ALTER TABLE [dbo].[StudyAssets]
         ADD CONSTRAINT [FK_StudyAssets_AppointmentServices]
-            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE SET NULL;
+            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE NO ACTION;
 END
 GO
 
@@ -142,7 +154,7 @@ IF NOT EXISTS (
 BEGIN
     ALTER TABLE [dbo].[ReferralCommissions]
         ADD CONSTRAINT [FK_ReferralCommissions_AppointmentServices]
-            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE SET NULL;
+            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE NO ACTION;
 END
 GO
 
@@ -162,7 +174,7 @@ IF NOT EXISTS (
 BEGIN
     ALTER TABLE [dbo].[InvoiceItems]
         ADD CONSTRAINT [FK_InvoiceItems_AppointmentServices]
-            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE SET NULL;
+            FOREIGN KEY ([AppointmentServiceId]) REFERENCES [dbo].[AppointmentServices]([Id]) ON DELETE NO ACTION;
 END
 GO
 
