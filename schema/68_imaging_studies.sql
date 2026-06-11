@@ -134,6 +134,7 @@ BEGIN
 END
 ELSE
     PRINT '  = Column dbo.StudyAssets.ImagingStudyId already exists — skipped';
+GO
 
 IF NOT EXISTS (
     SELECT 1 FROM sys.foreign_keys
@@ -195,11 +196,14 @@ BEGIN
 END
 ELSE
     PRINT '  = dbo.StudySliceIndexes.AppointmentId already NULLable — skipped';
+GO
 
 /* ============================================================
    4. Backfill — one ImagingStudy per DICOM-bearing StudyAsset.
       Id = the asset's Id (GUIDs, no collision risk) so linking
       back is a single deterministic pass. Re-runnable.
+      (separate batch: StudyAssets.ImagingStudyId must exist
+      before this DML compiles)
    ============================================================ */
 INSERT INTO dbo.ImagingStudies
     ([Id], [HospitalId], [StudyInstanceUID], [PatientId], [PatientName],

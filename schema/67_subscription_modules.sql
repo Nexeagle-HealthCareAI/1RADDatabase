@@ -35,10 +35,12 @@ BEGIN
 END
 ELSE
     PRINT '  = Column dbo.HospitalSubscriptions.Modules already exists — skipped';
+GO
 
 /* ============================================================
    2. Backfill safety net — any row that somehow has an empty
       value gets the full product (matches pre-module behaviour)
+      (separate batch: the column must exist before this compiles)
    ============================================================ */
 UPDATE dbo.HospitalSubscriptions
 SET [Modules] = 'RIS,PACS'
