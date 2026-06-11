@@ -21,6 +21,10 @@
 -- ============================================================
 
 SET NOCOUNT ON;
+-- Filtered indexes below require these ON (sqlcmd defaults them OFF without -I).
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+GO
 PRINT '----------------------------------------------------------';
 PRINT ' Starting imaging studies migration';
 PRINT '----------------------------------------------------------';

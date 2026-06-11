@@ -65,7 +65,7 @@ stages:
                          -d "$(DatabaseName)" \
                          -U "$(SqlUser)" \
                          -P "$(SqlPassword)" \
-                         -C -b -i "$file"
+                         -C -I -b -i "$file"
                 done
 
                 echo "Running data scripts..."
@@ -76,7 +76,7 @@ stages:
                          -d "$(DatabaseName)" \
                          -U "$(SqlUser)" \
                          -P "$(SqlPassword)" \
-                         -C -b -i "$file"
+                         -C -I -b -i "$file"
                 done
 
                 echo "===== DEV DEPLOY DONE ====="
@@ -96,7 +96,7 @@ stages:
                          -d "$(DatabaseName)" \
                          -U "$(SqlUser)" \
                          -P "$(SqlPassword)" \
-                         -C -b -i "$file"
+                         -C -I -b -i "$file"
                 done
                 echo "===== DEV ROLLBACK DONE ====="
 
@@ -160,7 +160,7 @@ stages:
                                -d "$(DatabaseName)" \
                                -U "$(SqlUser)" \
                                -P "$(SqlPassword)" \
-                               -C -b -i "$file"
+                               -C -I -b -i "$file"
                       done
 
                       echo "Running data scripts..."
@@ -171,7 +171,7 @@ stages:
                                -d "$(DatabaseName)" \
                                -U "$(SqlUser)" \
                                -P "$(SqlPassword)" \
-                               -C -b -i "$file"
+                               -C -I -b -i "$file"
                       done
 
                       echo "===== PROD DEPLOY DONE ====="
@@ -196,7 +196,7 @@ stages:
                                -d "$(DatabaseName)" \
                                -U "$(SqlUser)" \
                                -P "$(SqlPassword)" \
-                               -C -b -i "$file"
+                               -C -I -b -i "$file"
                       done
 
                       echo "===== PROD ROLLBACK DONE ====="

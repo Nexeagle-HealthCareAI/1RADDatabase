@@ -14,6 +14,10 @@
 -- ============================================================
 
 SET NOCOUNT ON;
+-- Filtered unique index below requires these ON (sqlcmd defaults them OFF without -I).
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+GO
 
 -- 1. AppointmentId becomes nullable (legacy rows keep their value).
 IF EXISTS (

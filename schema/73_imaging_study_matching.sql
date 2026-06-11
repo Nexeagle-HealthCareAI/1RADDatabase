@@ -12,6 +12,10 @@
 -- ============================================================
 
 SET NOCOUNT ON;
+-- Filtered index below requires these ON (sqlcmd defaults them OFF without -I).
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+GO
 
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
