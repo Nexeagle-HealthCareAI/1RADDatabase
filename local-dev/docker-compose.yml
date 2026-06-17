@@ -1,0 +1,31 @@
+# Local / CI SQL Server for 1Rad — replaces the always-on Azure SQL dev DB.
+# Engine is identical to Azure SQL for ~95% of schema/DML; runs free & disposable.
+#
+#   docker compose -f local-dev/docker-compose.yml up -d
+#   ./local-dev/init-db.sh         # creates 1RadDatabase + applies all schema/data
+#
+# Override the password via env: MSSQL_SA_PASSWORD=... docker compose up -d
+services:
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: 1rad-sql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Strong_Pass_123!}"
+      MSSQL_PID: "Developer"          # free Developer edition
+    ports:
+      - "1433:1433"
+    volumes:
+      - raddata:/var/opt/mssql        # persists between restarts; delete volume to reset
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  raddata:
+
+networks:
+  default:
+    name: 1rad-net

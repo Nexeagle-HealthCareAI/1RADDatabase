@@ -1,0 +1,80 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DROP-IN STAGE for oneRadDB/azure-pipelines.yml
+#
+# Paste this as the FIRST stage (before "DevDB"), then add to the DevDB stage:
+#     dependsOn: ValidateDB
+#     condition: succeeded()
+#
+# What it does: spins up a throwaway SQL Server 2022 container ON THE AGENT,
+# applies all schema + data scripts from scratch, and fails the build if any
+# script breaks — BEFORE anything touches (or bills) Azure SQL. Costs $0.
+# The agent already has docker; the existing "Install sqlcmd" pattern is reused.
+# ─────────────────────────────────────────────────────────────────────────────
+  - stage: ValidateDB
+    displayName: Validate DB (container)
+    jobs:
+      - job: ValidateSchema
+        timeoutInMinutes: 30
+        variables:
+          SA_PASSWORD: 'Strong_Pass_123!'
+          DB_NAME: '1RadDatabase'
+        steps:
+          - checkout: self
+
+          - task: Bash@3
+            displayName: Start SQL Server container
+            inputs:
+              targetType: inline
+              script: |
+                set -e
+                docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SA_PASSWORD)" \
+                  -e "MSSQL_PID=Developer" -p 1433:1433 \
+                  --name radsql -d mcr.microsoft.com/mssql/server:2022-latest
+
+          - task: Bash@3
+            displayName: Install sqlcmd
+            inputs:
+              targetType: inline
+              script: |
+                set -e
+                curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+                curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+                sudo apt-get update
+                sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+                echo '##vso[task.prependpath]/opt/mssql-tools18/bin'
+
+          - task: Bash@3
+            displayName: Apply schema + data from scratch
+            inputs:
+              targetType: inline
+              script: |
+                set -e
+                echo "Waiting for SQL Server..."
+                for i in $(seq 1 40); do
+                  if sqlcmd -S localhost,1433 -U sa -P "$(SA_PASSWORD)" -C -Q "SELECT 1" >/dev/null 2>&1; then break; fi
+                  sleep 2
+                  [ "$i" -eq 40 ] && { echo "SQL never ready"; exit 1; }
+                done
+
+                sqlcmd -S localhost,1433 -U sa -P "$(SA_PASSWORD)" -C -b \
+                  -Q "IF DB_ID('$(DB_NAME)') IS NULL CREATE DATABASE [$(DB_NAME)];"
+
+                echo "===== Applying schema ====="
+                find schema -type f -name "*.sql" | sort | while IFS= read -r file; do
+                  echo "Executing: $file"
+                  sqlcmd -S localhost,1433 -U sa -P "$(SA_PASSWORD)" -d "$(DB_NAME)" -C -I -b -i "$file"
+                done
+
+                echo "===== Applying data ====="
+                find data -type f -name "*.sql" | sort | while IFS= read -r file; do
+                  echo "Executing: $file"
+                  sqlcmd -S localhost,1433 -U sa -P "$(SA_PASSWORD)" -d "$(DB_NAME)" -C -I -b -i "$file"
+                done
+                echo "===== VALIDATION PASSED ====="
+
+          - task: Bash@3
+            displayName: Tear down container
+            condition: always()
+            inputs:
+              targetType: inline
+              script: docker rm -f radsql || true
