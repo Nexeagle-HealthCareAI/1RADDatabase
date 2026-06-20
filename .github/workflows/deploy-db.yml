@@ -1,11 +1,6 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1RADDatabase — Production-grade Schema Deployment
+# 1RADDatabase — Schema Deployment
 # ═══════════════════════════════════════════════════════════════════════════════
-#
-# APPROACH: VM pulls SQL files directly from GitHub (no SCP needed)
-#   - Avoids scp-action SSH key compatibility issues entirely
-#   - Uses only appleboy/ssh-action for all VM communication
-#   - VM clones/pulls the repo, then runs migrations locally
 #
 # BEST PRACTICES:
 #   ✅ Migration tracking table  — never re-runs an already-applied script
@@ -25,10 +20,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #   DEV_SSH_HOST        Dev VM IP           (151.185.45.77)
 #   DEV_SSH_USER        SSH login           (root)
-#   DEV_SSH_KEY         Private SSH key
-#   DEV_SA_PASSWORD     SQL Server SA pass  (Strong_Pass_123!)
-#   GHCR_TOKEN          GitHub PAT          (repo + read:packages scope)
-#                       — used by VM to clone this private repo
+#   DEV_SSH_PASSWORD    Root password set on VM
+#   DEV_SA_PASSWORD     SQL Server SA password
+#   GHCR_TOKEN          GitHub PAT (repo + read:packages scope)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 name: Deploy Database Schema
@@ -74,7 +68,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
 
     steps:
-      - name: Checkout (validate scripts exist)
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Validate migration scripts
@@ -87,7 +81,6 @@ jobs:
             exit 1
           fi
           echo "script_count=$COUNT" >> $GITHUB_OUTPUT
-
           echo "## 📋 Scripts to deploy ($COUNT total)" >> $GITHUB_STEP_SUMMARY
           echo "| # | File |" >> $GITHUB_STEP_SUMMARY
           echo "|---|------|" >> $GITHUB_STEP_SUMMARY
@@ -97,143 +90,104 @@ jobs:
             i=$((i+1))
           done
 
+      - name: Copy schema files to Dev VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          source: "schema/[0-9][0-9]_*.sql"
+          target: "/opt/myapp/dbdeploy/"
+          strip_components: 1
+
       - name: Run migrations on Dev VM
         uses: appleboy/ssh-action@v1.0.3
         env:
           SA_PASSWORD: ${{ secrets.DEV_SA_PASSWORD }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
           command_timeout: 20m
-          envs: SA_PASSWORD,GHCR_TOKEN,REPO,BRANCH,DRY_RUN
+          envs: SA_PASSWORD,DRY_RUN
           script: |
             set -euo pipefail
             CONTAINER="sqlserver"
             DB="1RadDatabase"
-            REPO_DIR="/opt/myapp/db-repo"
+            DEPLOY_DIR="/opt/myapp/dbdeploy"
 
-            echo "╔══════════════════════════════════════════════════════╗"
-            echo "║     1RAD DATABASE MIGRATION — DEV ENVIRONMENT        ║"
-            if [ "$DRY_RUN" = "true" ]; then
-            echo "║               ⚠️  DRY RUN MODE ⚠️                     ║"
-            fi
-            echo "╚══════════════════════════════════════════════════════╝"
-
-            # ── sqlcmd helpers ───────────────────────────────────────────────
             run_sql() {
-              if docker exec "$CONTAINER" test -f /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
-                docker exec "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
-                  -S localhost -U sa -P "$SA_PASSWORD" -C "$@"
-              else
-                docker exec "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
-                  -S localhost -U sa -P "$SA_PASSWORD" "$@"
-              fi
+              docker exec "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C "$@" 2>/dev/null || \
+              docker exec "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" "$@"
             }
 
             run_sql_file() {
-              local FILE="$1"
-              if docker exec "$CONTAINER" test -f /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
-                docker exec -i "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
-                  -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB" -b -I < "$FILE"
-              else
-                docker exec -i "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
-                  -S localhost -U sa -P "$SA_PASSWORD" -d "$DB" -b -I < "$FILE"
-              fi
+              docker exec -i "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB" -b -I < "$1" 2>/dev/null || \
+              docker exec -i "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -d "$DB" -b -I < "$1"
             }
 
-            # ── Step 1: Pull repo onto VM ────────────────────────────────────
+            echo "╔══════════════════════════════════════════════════════╗"
+            echo "║     1RAD DATABASE MIGRATION — DEV ENVIRONMENT        ║"
+            [ "$DRY_RUN" = "true" ] && echo "║               ⚠️  DRY RUN MODE ⚠️                     ║"
+            echo "╚══════════════════════════════════════════════════════╝"
+
+            # ── Step 1: Health check ─────────────────────────────────────────
             echo ""
-            echo "▶ Step 1/5 — Syncing repo onto VM"
-            CLONE_URL="https://${GHCR_TOKEN}@github.com/${REPO}.git"
-
-            if [ -d "$REPO_DIR/.git" ]; then
-              echo "  Repo exists — pulling latest $BRANCH"
-              git -C "$REPO_DIR" fetch origin
-              git -C "$REPO_DIR" checkout "$BRANCH"
-              git -C "$REPO_DIR" reset --hard "origin/$BRANCH"
-            else
-              echo "  Cloning repo for first time"
-              mkdir -p "$(dirname $REPO_DIR)"
-              git clone --branch "$BRANCH" "$CLONE_URL" "$REPO_DIR"
-            fi
-            echo "  ✅ Repo synced — commit: $(git -C $REPO_DIR rev-parse --short HEAD)"
-
-            SCHEMA_DIR="$REPO_DIR/schema"
-
-            # ── Step 2: SQL Server health check ──────────────────────────────
-            echo ""
-            echo "▶ Step 2/5 — SQL Server health check"
+            echo "▶ Step 1/5 — SQL Server health check"
             for i in $(seq 1 12); do
-              if run_sql -Q "SELECT 1" > /dev/null 2>&1; then
-                echo "  ✅ SQL Server is ready"; break
-              fi
+              run_sql -Q "SELECT 1" > /dev/null 2>&1 && echo "  ✅ SQL Server ready" && break
               echo "  ⏳ Waiting ($i/12)..."; sleep 5
-              if [ $i -eq 12 ]; then
-                echo "  ❌ SQL Server not responding after 60s"; exit 1
-              fi
+              [ $i -eq 12 ] && echo "  ❌ SQL Server not responding" && exit 1
             done
 
-            # ── Step 3: Create database ──────────────────────────────────────
+            # ── Step 2: Create database ──────────────────────────────────────
             echo ""
-            echo "▶ Step 3/5 — Ensure database and migration table exist"
-            if [ "$DRY_RUN" != "true" ]; then
-              run_sql -Q "
-                IF DB_ID('$DB') IS NULL
-                BEGIN CREATE DATABASE [$DB]; PRINT 'Created database $DB'; END
-                ELSE PRINT 'Database $DB already exists';"
+            echo "▶ Step 2/5 — Ensure database exists"
+            [ "$DRY_RUN" != "true" ] && run_sql -Q \
+              "IF DB_ID('$DB') IS NULL BEGIN CREATE DATABASE [$DB]; PRINT 'Created $DB'; END ELSE PRINT '$DB already exists';"
 
-              run_sql -d "$DB" -Q "
-                IF NOT EXISTS (
-                  SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-                  WHERE TABLE_NAME = '__MigrationHistory'
-                )
-                CREATE TABLE dbo.__MigrationHistory (
-                  Id           INT IDENTITY(1,1) PRIMARY KEY,
-                  ScriptName   NVARCHAR(255) NOT NULL UNIQUE,
-                  AppliedAt    DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
-                  AppliedBy    NVARCHAR(100) NOT NULL DEFAULT 'github-actions',
-                  DurationMs   INT           NULL
-                );
-                PRINT '__MigrationHistory ready';"
-            else
-              echo "  [DRY RUN] Would create database and __MigrationHistory table"
-            fi
+            # ── Step 3: Migration tracking table ─────────────────────────────
+            echo ""
+            echo "▶ Step 3/5 — Ensure __MigrationHistory table exists"
+            [ "$DRY_RUN" != "true" ] && run_sql -d "$DB" -Q "
+              IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='__MigrationHistory')
+              CREATE TABLE dbo.__MigrationHistory (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ScriptName NVARCHAR(255) NOT NULL UNIQUE,
+                AppliedAt  DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+                AppliedBy  NVARCHAR(100) NOT NULL DEFAULT 'github-actions',
+                DurationMs INT NULL
+              ); PRINT '__MigrationHistory ready';"
 
-            # ── Step 4: Run migrations ───────────────────────────────────────
+            # ── Step 4: Run scripts ──────────────────────────────────────────
             echo ""
             echo "▶ Step 4/5 — Running migration scripts"
             echo ""
-
             APPLIED=0; SKIPPED=0; FAILED=0; FAILED_SCRIPTS=""
 
-            for SCRIPT_PATH in $(ls "$SCHEMA_DIR"/[0-9][0-9]_*.sql 2>/dev/null | sort); do
+            for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/[0-9][0-9]_*.sql 2>/dev/null | sort); do
               SCRIPT=$(basename "$SCRIPT_PATH")
               START_MS=$(($(date +%s%N)/1000000))
 
-              # Check migration history (skip check in dry-run)
-              if [ "$DRY_RUN" != "true" ]; then
-                ALREADY=$(run_sql -d "$DB" -h -1 -W \
-                  -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
-                  2>/dev/null | tr -d ' \r\n')
-              else
-                ALREADY="0"
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "  🔍 WOULD  $SCRIPT"
+                APPLIED=$((APPLIED+1)); continue
               fi
+
+              ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                2>/dev/null | tr -d ' \r\n')
 
               if [ "${ALREADY:-0}" = "1" ]; then
                 echo "  ⏭  SKIP   $SCRIPT  (already applied)"
-                SKIPPED=$((SKIPPED+1))
-                continue
-              fi
-
-              if [ "$DRY_RUN" = "true" ]; then
-                echo "  🔍 WOULD  $SCRIPT"
-                APPLIED=$((APPLIED+1))
-                continue
+                SKIPPED=$((SKIPPED+1)); continue
               fi
 
               if run_sql_file "$SCRIPT_PATH" 2>&1; then
@@ -247,49 +201,38 @@ jobs:
               else
                 echo "  ❌ FAILED  $SCRIPT"
                 FAILED=$((FAILED+1))
-                FAILED_SCRIPTS="$FAILED_SCRIPTS\n    - $SCRIPT"
-                break   # stop on first failure — don't run dependent scripts
+                FAILED_SCRIPTS="$FAILED_SCRIPTS $SCRIPT"
+                break
               fi
             done
 
             # ── Step 5: Verify ───────────────────────────────────────────────
             echo ""
             echo "▶ Step 5/5 — Verification"
-
             if [ "$DRY_RUN" != "true" ] && [ "$FAILED" -eq 0 ]; then
               TABLE_COUNT=$(run_sql -d "$DB" -h -1 -W \
                 -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';" \
                 2>/dev/null | tr -d ' \r\n')
               echo "  📊 Total tables in [$DB]: $TABLE_COUNT"
-
               echo ""
-              echo "  All tables:"
+              echo "  Tables:"
               run_sql -d "$DB" -W \
                 -Q "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME;"
-
               echo ""
-              echo "  Migration history (last 10 applied):"
+              echo "  Last 10 migrations applied:"
               run_sql -d "$DB" -W \
                 -Q "SELECT TOP 10 ScriptName, FORMAT(AppliedAt,'yyyy-MM-dd HH:mm') AS AppliedAt, CAST(DurationMs AS VARCHAR)+'ms' AS Duration FROM dbo.__MigrationHistory ORDER BY Id DESC;"
             fi
 
-            # ── Final summary ────────────────────────────────────────────────
             echo ""
             echo "══════════════════════════════════════════════"
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "  DRY RUN complete — nothing applied"
-              echo "  Would apply : $APPLIED scripts"
-              echo "  Already done: $SKIPPED scripts"
-            else
-              echo "  ✅ Applied : $APPLIED"
-              echo "  ⏭  Skipped: $SKIPPED  (already in __MigrationHistory)"
-              echo "  ❌ Failed  : $FAILED"
-            fi
+            [ "$DRY_RUN" = "true" ] \
+              && echo "  DRY RUN — Would apply: $APPLIED | Already done: $SKIPPED" \
+              || echo "  ✅ Applied: $APPLIED  |  ⏭ Skipped: $SKIPPED  |  ❌ Failed: $FAILED"
             echo "══════════════════════════════════════════════"
 
             if [ $FAILED -gt 0 ]; then
-              echo ""
-              echo "Failed scripts:$FAILED_SCRIPTS"
+              echo "::error::Failed: $FAILED_SCRIPTS"
               exit 1
             fi
 
@@ -297,19 +240,15 @@ jobs:
         if: always()
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🗄️ DB Migration Result — Dev" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Status:** ❌ Failed — check logs above" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🗄️ DB Migration — Dev" >> $GITHUB_STEP_SUMMARY
+          [ "${{ job.status }}" = "success" ] \
+            && echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY \
+            || echo "**Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
           echo "| | |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Dry run | ${{ github.event.inputs.dry_run || 'false' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Scripts found | ${{ steps.validate.outputs.script_count }} |" >> $GITHUB_STEP_SUMMARY
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -324,71 +263,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate migration scripts
-        id: validate
-        run: |
-          COUNT=$(ls schema/[0-9][0-9]_*.sql 2>/dev/null | wc -l)
-          if [ "$COUNT" -eq 0 ]; then
-            echo "::error::No numbered migration scripts found"; exit 1
-          fi
-          echo "script_count=$COUNT" >> $GITHUB_OUTPUT
+      - name: Copy schema files to Prod VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          port: 22
+          source: "schema/[0-9][0-9]_*.sql"
+          target: "/opt/myapp/dbdeploy/"
+          strip_components: 1
 
       - name: Run migrations on Prod VM
         uses: appleboy/ssh-action@v1.0.3
         env:
           SA_PASSWORD: ${{ secrets.PROD_SA_PASSWORD }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         with:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          port: 22
           command_timeout: 20m
-          envs: SA_PASSWORD,GHCR_TOKEN,REPO,BRANCH,DRY_RUN
+          envs: SA_PASSWORD,DRY_RUN
           script: |
             set -euo pipefail
-            CONTAINER="sqlserver"
-            DB="1RadDatabase"
-            REPO_DIR="/opt/myapp/db-repo"
+            CONTAINER="sqlserver"; DB="1RadDatabase"; DEPLOY_DIR="/opt/myapp/dbdeploy"
 
             run_sql() {
-              if docker exec "$CONTAINER" test -f /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
-                docker exec "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C "$@"
-              else
-                docker exec "$CONTAINER" /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" "$@"
-              fi
+              docker exec "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C "$@" 2>/dev/null || \
+              docker exec "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" "$@"
             }
-
             run_sql_file() {
-              if docker exec "$CONTAINER" test -f /opt/mssql-tools18/bin/sqlcmd 2>/dev/null; then
-                docker exec -i "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
-                  -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB" -b -I < "$1"
-              else
-                docker exec -i "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
-                  -S localhost -U sa -P "$SA_PASSWORD" -d "$DB" -b -I < "$1"
-              fi
+              docker exec -i "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB" -b -I < "$1" 2>/dev/null || \
+              docker exec -i "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -d "$DB" -b -I < "$1"
             }
-
-            echo "╔══════════════════════════════════════════════════════╗"
-            echo "║     1RAD DATABASE MIGRATION — PROD ENVIRONMENT       ║"
-            echo "╚══════════════════════════════════════════════════════╝"
-
-            CLONE_URL="https://${GHCR_TOKEN}@github.com/${REPO}.git"
-            if [ -d "$REPO_DIR/.git" ]; then
-              git -C "$REPO_DIR" fetch origin
-              git -C "$REPO_DIR" checkout "$BRANCH"
-              git -C "$REPO_DIR" reset --hard "origin/$BRANCH"
-            else
-              git clone --branch "$BRANCH" "$CLONE_URL" "$REPO_DIR"
-            fi
-            echo "✅ Repo synced — $(git -C $REPO_DIR rev-parse --short HEAD)"
 
             for i in $(seq 1 12); do
               run_sql -Q "SELECT 1" > /dev/null 2>&1 && break
-              echo "⏳ Waiting for SQL Server ($i/12)..."; sleep 5
-              [ $i -eq 12 ] && echo "❌ SQL Server not ready" && exit 1
+              echo "⏳ Waiting ($i/12)..."; sleep 5
+              [ $i -eq 12 ] && exit 1
             done
 
             run_sql -Q "IF DB_ID('$DB') IS NULL CREATE DATABASE [$DB];"
@@ -403,46 +321,27 @@ jobs:
               );"
 
             APPLIED=0; SKIPPED=0; FAILED=0
-            for SCRIPT_PATH in $(ls "$REPO_DIR/schema"/[0-9][0-9]_*.sql 2>/dev/null | sort); do
+            for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/[0-9][0-9]_*.sql 2>/dev/null | sort); do
               SCRIPT=$(basename "$SCRIPT_PATH")
               ALREADY=$(run_sql -d "$DB" -h -1 -W \
                 -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
                 2>/dev/null | tr -d ' \r\n')
               if [ "${ALREADY:-0}" = "1" ]; then
-                echo "  ⏭  SKIP   $SCRIPT"; SKIPPED=$((SKIPPED+1)); continue
+                echo "  ⏭  SKIP $SCRIPT"; SKIPPED=$((SKIPPED+1)); continue
               fi
               START_MS=$(($(date +%s%N)/1000000))
               if run_sql_file "$SCRIPT_PATH" 2>&1; then
                 END_MS=$(($(date +%s%N)/1000000))
                 run_sql -d "$DB" -Q \
-                  "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $((END_MS-START_MS)));" \
-                  > /dev/null 2>&1
-                echo "  ✅ APPLIED $SCRIPT"
-                APPLIED=$((APPLIED+1))
+                  "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $((END_MS-START_MS)));" > /dev/null 2>&1
+                echo "  ✅ APPLIED $SCRIPT"; APPLIED=$((APPLIED+1))
               else
-                echo "  ❌ FAILED  $SCRIPT"; FAILED=$((FAILED+1)); break
+                echo "  ❌ FAILED $SCRIPT"; FAILED=$((FAILED+1)); break
               fi
             done
 
             TABLE_COUNT=$(run_sql -d "$DB" -h -1 -W \
               -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';" \
               2>/dev/null | tr -d ' \r\n')
-            echo ""
-            echo "📊 Tables in [$DB]: $TABLE_COUNT"
-            echo "✅ Applied: $APPLIED  |  ⏭ Skipped: $SKIPPED  |  ❌ Failed: $FAILED"
+            echo "📊 Tables: $TABLE_COUNT | ✅ Applied: $APPLIED | ⏭ Skipped: $SKIPPED | ❌ Failed: $FAILED"
             [ $FAILED -gt 0 ] && exit 1
-
-      - name: Write job summary
-        if: always()
-        run: |
-          echo "## 🗄️ DB Migration Result — Prod" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "| | |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
