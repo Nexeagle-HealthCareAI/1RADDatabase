@@ -18,8 +18,8 @@ on:
       - develop
       - main
     paths:
-      - 'oneRadDB/schema/**'
-      - 'oneRadDB/data/**'
+      - 'schema/**'
+      - 'data/**'
       - '.github/workflows/deploy-db.yml'
 
 jobs:
@@ -38,9 +38,9 @@ jobs:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
           key: ${{ secrets.DEV_SSH_KEY }}
-          source: "oneRadDB/schema/*.sql,oneRadDB/data"
+          source: "schema/[0-9][0-9]_*.sql"
           target: "/opt/myapp/dbdeploy/"
-          strip_components: 0
+          strip_components: 1
 
       - name: Run schema scripts on Dev SQL Server
         uses: appleboy/ssh-action@v1.0.3
@@ -54,8 +54,8 @@ jobs:
               -S localhost -U sa -P "Strong_Pass_123!" -C \
               -Q "IF DB_ID('1RadDatabase') IS NULL CREATE DATABASE [1RadDatabase];"
 
-            # Run all schema scripts in order
-            for f in $(ls /opt/myapp/dbdeploy/oneRadDB/schema/*.sql | sort); do
+            # Run all numbered schema scripts in order (skip loose unnumbered files)
+            for f in $(ls /opt/myapp/dbdeploy/[0-9][0-9]_*.sql 2>/dev/null | sort); do
               echo "Applying: $(basename $f)"
               docker exec -i sqlserver /opt/mssql-tools18/bin/sqlcmd \
                 -S localhost -U sa -P "Strong_Pass_123!" -C \
@@ -86,9 +86,9 @@ jobs:
           host: ${{ secrets.PROD_SSH_HOST }}
           username: ${{ secrets.PROD_SSH_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
-          source: "oneRadDB/schema/*.sql,oneRadDB/data"
+          source: "schema/[0-9][0-9]_*.sql"
           target: "/opt/myapp/dbdeploy/"
-          strip_components: 0
+          strip_components: 1
 
       - name: Run schema scripts on Prod SQL Server
         uses: appleboy/ssh-action@v1.0.3
@@ -101,7 +101,7 @@ jobs:
               -S localhost -U sa -P "Strong_Pass_123!" -C \
               -Q "IF DB_ID('1RadDatabase') IS NULL CREATE DATABASE [1RadDatabase];"
 
-            for f in $(ls /opt/myapp/dbdeploy/oneRadDB/schema/*.sql | sort); do
+            for f in $(ls /opt/myapp/dbdeploy/[0-9][0-9]_*.sql 2>/dev/null | sort); do
               echo "Applying: $(basename $f)"
               docker exec -i sqlserver /opt/mssql-tools18/bin/sqlcmd \
                 -S localhost -U sa -P "Strong_Pass_123!" -C \
