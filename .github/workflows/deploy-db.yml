@@ -108,7 +108,7 @@ jobs:
         with:
           host: ${{ secrets.DEV_SSH_HOST }}
           username: ${{ secrets.DEV_SSH_USER }}
-          key: ${{ secrets.DEV_SSH_KEY }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
           command_timeout: 20m
           envs: SA_PASSWORD,GHCR_TOKEN,REPO,BRANCH,DRY_RUN
           script: |
