@@ -217,6 +217,37 @@ jobs:
               fi
             done
 
+            # ── Step 4b: Run seed data scripts (after schema, only if clean) ──
+            if [ "$FAILED" -eq 0 ] && ls "$DEPLOY_DIR"/data/*.sql >/dev/null 2>&1; then
+              echo ""
+              echo "▶ Step 4b — Running seed data scripts"
+              for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/data/*.sql 2>/dev/null | sort); do
+                SCRIPT="data/$(basename "$SCRIPT_PATH")"
+                START_MS=$(($(date +%s%N)/1000000))
+
+                if [ "$DRY_RUN" = "true" ]; then
+                  echo "  🔍 WOULD  $SCRIPT"; APPLIED=$((APPLIED+1)); continue
+                fi
+
+                ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                  -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                  2>/dev/null | tr -d ' \r\n')
+                if [ "${ALREADY:-0}" = "1" ]; then
+                  echo "  ⏭  SKIP   $SCRIPT  (already applied)"; SKIPPED=$((SKIPPED+1)); continue
+                fi
+
+                if run_sql_file "$SCRIPT_PATH" 2>&1; then
+                  END_MS=$(($(date +%s%N)/1000000)); DURATION=$((END_MS - START_MS))
+                  run_sql -d "$DB" -Q \
+                    "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $DURATION);" \
+                    > /dev/null 2>&1
+                  echo "  ✅ APPLIED $SCRIPT  (${DURATION}ms)"; APPLIED=$((APPLIED+1))
+                else
+                  echo "  ❌ FAILED  $SCRIPT"; FAILED=$((FAILED+1)); FAILED_SCRIPTS="$FAILED_SCRIPTS $SCRIPT"; break
+                fi
+              done
+            fi
+
             # ── Step 5: Verify ───────────────────────────────────────────────
             echo ""
             echo "▶ Step 5/5 — Verification"
@@ -285,6 +316,17 @@ jobs:
           target: "/opt/myapp/dbdeploy/"
           strip_components: 1
 
+      - name: Copy seed data files to Prod VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          port: 22
+          source: "data/*.sql"
+          target: "/opt/myapp/dbdeploy/data/"
+          strip_components: 1
+
       - name: Run migrations on Prod VM
         uses: appleboy/ssh-action@v1.0.3
         env:
@@ -350,6 +392,28 @@ jobs:
                 echo "  ❌ FAILED $SCRIPT"; FAILED=$((FAILED+1)); break
               fi
             done
+
+            # ── Seed data scripts (after schema, only if clean) ──
+            if [ "$FAILED" -eq 0 ] && ls "$DEPLOY_DIR"/data/*.sql >/dev/null 2>&1; then
+              for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/data/*.sql 2>/dev/null | sort); do
+                SCRIPT="data/$(basename "$SCRIPT_PATH")"
+                ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                  -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                  2>/dev/null | tr -d ' \r\n')
+                if [ "${ALREADY:-0}" = "1" ]; then
+                  echo "  ⏭  SKIP $SCRIPT"; SKIPPED=$((SKIPPED+1)); continue
+                fi
+                START_MS=$(($(date +%s%N)/1000000))
+                if run_sql_file "$SCRIPT_PATH" 2>&1; then
+                  END_MS=$(($(date +%s%N)/1000000))
+                  run_sql -d "$DB" -Q \
+                    "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $((END_MS-START_MS)));" > /dev/null 2>&1
+                  echo "  ✅ APPLIED $SCRIPT"; APPLIED=$((APPLIED+1))
+                else
+                  echo "  ❌ FAILED $SCRIPT"; FAILED=$((FAILED+1)); break
+                fi
+              done
+            fi
 
             TABLE_COUNT=$(run_sql -d "$DB" -h -1 -W \
               -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';" \
