@@ -101,6 +101,17 @@ jobs:
           target: "/opt/myapp/dbdeploy/"
           strip_components: 1
 
+      - name: Copy seed data files to Dev VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          source: "data/*.sql"
+          target: "/opt/myapp/dbdeploy/data/"
+          strip_components: 1
+
       - name: Run migrations on Dev VM
         uses: appleboy/ssh-action@v1.0.3
         env:
