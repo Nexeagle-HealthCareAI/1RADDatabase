@@ -71,42 +71,35 @@ jobs:
           COUNT=$(ls schema/[0-9][0-9]_*.sql 2>/dev/null | wc -l)
           echo "=== Total: $COUNT scripts ==="
 
-      - name: Prepare SSH key
-        run: |
-          echo "${{ secrets.DEV_SSH_KEY_B64 }}" | base64 -d > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
+      - name: Install sshpass
+        run: sudo apt-get install -y sshpass
 
       - name: Copy migration scripts to Dev VM
+        env:
+          SSHPASS: ${{ secrets.DEV_SSH_PASSWORD }}
         run: |
-          ssh -i /tmp/deploy_key \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=30 \
               ${{ secrets.DEV_SSH_USER }}@${{ secrets.DEV_SSH_HOST }} \
               'mkdir -p /opt/myapp/dbdeploy/data'
           if ls schema/[0-9][0-9]_*.sql 2>/dev/null | head -1 | grep -q .; then
-            scp -i /tmp/deploy_key \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
+            sshpass -e scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 schema/[0-9][0-9]_*.sql \
                 ${{ secrets.DEV_SSH_USER }}@${{ secrets.DEV_SSH_HOST }}:/opt/myapp/dbdeploy/
           fi
           if ls data/*.sql 2>/dev/null | head -1 | grep -q .; then
-            scp -i /tmp/deploy_key \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
+            sshpass -e scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 data/*.sql \
                 ${{ secrets.DEV_SSH_USER }}@${{ secrets.DEV_SSH_HOST }}:/opt/myapp/dbdeploy/data/
           fi
 
       - name: Run migrations on Dev VM
         env:
+          SSHPASS: ${{ secrets.DEV_SSH_PASSWORD }}
           SA_PASSWORD: ${{ secrets.DEV_SA_PASSWORD }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
-          ssh -i /tmp/deploy_key \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
+          sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               ${{ secrets.DEV_SSH_USER }}@${{ secrets.DEV_SSH_HOST }} \
               "bash -s" << REMOTE
           set -e
