@@ -287,6 +287,29 @@ jobs:
             fi
           done
 
+          echo "=== Running data scripts ==="
+          for SCRIPT_PATH in \$(ls "\$DEPLOY_DIR"/data/*.sql 2>/dev/null | sort); do
+            SCRIPT="data/\$(basename "\$SCRIPT_PATH")"
+            ALREADY=\$(run_sql -d "\$DB_NAME" -h -1 -W \
+              -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='\$SCRIPT';" \
+              2>/dev/null | tr -d ' \r\n')
+            if [ "\${ALREADY:-0}" = "1" ]; then
+              echo "  ⏭  SKIP \$SCRIPT"; SKIPPED=\$((SKIPPED+1)); continue
+            fi
+            START_MS=\$(((\$(date +%s%N))/1000000))
+            if docker exec -i "\$SQL_CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+              -S localhost -U sa -P "\$SA_PASSWORD" -d "\$DB_NAME" -C -b \
+              < "\$SCRIPT_PATH" 2>&1; then
+              END_MS=\$(((\$(date +%s%N))/1000000))
+              DURATION=\$((END_MS - START_MS))
+              run_sql -d "\$DB_NAME" -Q \
+                "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('\$SCRIPT', \$DURATION);" > /dev/null 2>&1
+              echo "  ✅ APPLIED \$SCRIPT (\${DURATION}ms)"; APPLIED=\$((APPLIED+1))
+            else
+              echo "  ❌ FAILED \$SCRIPT"; FAILED=\$((FAILED+1)); break
+            fi
+          done
+
           echo ""
           echo "=== Summary: ✅ Applied: \$APPLIED | ⏭ Skipped: \$SKIPPED | ❌ Failed: \$FAILED ==="
           [ \$FAILED -eq 0 ] || exit 1
