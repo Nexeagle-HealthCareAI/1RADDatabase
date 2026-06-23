@@ -1,0 +1,422 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1RADDatabase — Schema Deployment
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# BEST PRACTICES:
+#   ✅ Migration tracking table  — never re-runs an already-applied script
+#   ✅ SA password as secret     — never hardcoded
+#   ✅ Concurrency lock          — one deploy per environment at a time
+#   ✅ SQL Server health check   — waits for DB ready before migrating
+#   ✅ Dry-run mode              — preview without applying
+#   ✅ Per-script status         — APPLIED / SKIPPED / FAILED per file
+#   ✅ Fail-fast on error        — stops immediately on failure
+#   ✅ Verification step         — table count + list after deploy
+#   ✅ GitHub Job Summary        — rich report in Actions UI
+#   ✅ Manual trigger            — run anytime from Actions tab
+#   ✅ Environment protection    — Prod requires manual approval
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUIRED SECRETS  (Settings → Secrets and variables → Actions)
+# ─────────────────────────────────────────────────────────────────────────────
+#   DEV_SSH_HOST        Dev VM IP           (151.185.45.77)
+#   DEV_SSH_USER        SSH login           (root)
+#   DEV_SSH_PASSWORD    Root password set on VM
+#   DEV_SA_PASSWORD     SQL Server SA password
+#   GHCR_TOKEN          GitHub PAT (repo + read:packages scope)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Deploy Database Schema
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'schema/[0-9][0-9]_*.sql'
+      - 'data/*.sql'
+      - '.github/workflows/deploy-db.yml'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - production
+      dry_run:
+        description: 'Dry run — show what WOULD run without applying'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: db-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+jobs:
+  deploy-dev:
+    name: "Deploy Schema → Dev"
+    runs-on: ubuntu-latest
+    environment: development
+    if: |
+      github.ref == 'refs/heads/develop' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate migration scripts
+        id: validate
+        run: |
+          COUNT=$(ls schema/[0-9][0-9]_*.sql 2>/dev/null | wc -l)
+          echo "Found $COUNT numbered migration scripts"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::No numbered migration scripts found in schema/"
+            exit 1
+          fi
+          echo "script_count=$COUNT" >> $GITHUB_OUTPUT
+          echo "## 📋 Scripts to deploy ($COUNT total)" >> $GITHUB_STEP_SUMMARY
+          echo "| # | File |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|------|" >> $GITHUB_STEP_SUMMARY
+          i=1
+          for f in $(ls schema/[0-9][0-9]_*.sql | sort); do
+            echo "| $i | \`$(basename $f)\` |" >> $GITHUB_STEP_SUMMARY
+            i=$((i+1))
+          done
+
+      - name: Copy schema files to Dev VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          source: "schema/[0-9][0-9]_*.sql"
+          target: "/opt/myapp/dbdeploy/"
+          strip_components: 1
+
+      - name: Copy seed data files to Dev VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          source: "data/*.sql"
+          target: "/opt/myapp/dbdeploy/data/"
+          strip_components: 1
+
+      - name: Run migrations on Dev VM
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SA_PASSWORD: ${{ secrets.DEV_SA_PASSWORD }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        with:
+          host: ${{ secrets.DEV_SSH_HOST }}
+          username: ${{ secrets.DEV_SSH_USER }}
+          password: ${{ secrets.DEV_SSH_PASSWORD }}
+          port: 22
+          command_timeout: 20m
+          envs: SA_PASSWORD,DRY_RUN
+          script: |
+            set -euo pipefail
+            CONTAINER="sqlserver"
+            DB="1RadDatabase"
+            DEPLOY_DIR="/opt/myapp/dbdeploy"
+
+            run_sql() {
+              docker exec "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C "$@" 2>/dev/null || \
+              docker exec "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" "$@"
+            }
+
+            run_sql_file() {
+              docker exec -i "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB" -b -I < "$1" 2>/dev/null || \
+              docker exec -i "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -d "$DB" -b -I < "$1"
+            }
+
+            echo "╔══════════════════════════════════════════════════════╗"
+            echo "║     1RAD DATABASE MIGRATION — DEV ENVIRONMENT        ║"
+            [ "$DRY_RUN" = "true" ] && echo "║               ⚠️  DRY RUN MODE ⚠️                     ║"
+            echo "╚══════════════════════════════════════════════════════╝"
+
+            # ── Step 1: Health check ─────────────────────────────────────────
+            echo ""
+            echo "▶ Step 1/5 — SQL Server health check"
+            for i in $(seq 1 12); do
+              run_sql -Q "SELECT 1" > /dev/null 2>&1 && echo "  ✅ SQL Server ready" && break
+              echo "  ⏳ Waiting ($i/12)..."; sleep 5
+              [ $i -eq 12 ] && echo "  ❌ SQL Server not responding" && exit 1
+            done
+
+            # ── Step 2: Create database ──────────────────────────────────────
+            echo ""
+            echo "▶ Step 2/5 — Ensure database exists"
+            [ "$DRY_RUN" != "true" ] && run_sql -Q \
+              "IF DB_ID('$DB') IS NULL BEGIN CREATE DATABASE [$DB]; PRINT 'Created $DB'; END ELSE PRINT '$DB already exists';"
+
+            # ── Step 3: Migration tracking table ─────────────────────────────
+            echo ""
+            echo "▶ Step 3/5 — Ensure __MigrationHistory table exists"
+            [ "$DRY_RUN" != "true" ] && run_sql -d "$DB" -Q "
+              IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='__MigrationHistory')
+              CREATE TABLE dbo.__MigrationHistory (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ScriptName NVARCHAR(255) NOT NULL UNIQUE,
+                AppliedAt  DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+                AppliedBy  NVARCHAR(100) NOT NULL DEFAULT 'github-actions',
+                DurationMs INT NULL
+              ); PRINT '__MigrationHistory ready';"
+
+            # ── Step 4: Run scripts ──────────────────────────────────────────
+            echo ""
+            echo "▶ Step 4/5 — Running migration scripts"
+            echo ""
+            APPLIED=0; SKIPPED=0; FAILED=0; FAILED_SCRIPTS=""
+
+            for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/[0-9][0-9]_*.sql 2>/dev/null | sort); do
+              SCRIPT=$(basename "$SCRIPT_PATH")
+              START_MS=$(($(date +%s%N)/1000000))
+
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "  🔍 WOULD  $SCRIPT"
+                APPLIED=$((APPLIED+1)); continue
+              fi
+
+              ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                2>/dev/null | tr -d ' \r\n')
+
+              if [ "${ALREADY:-0}" = "1" ]; then
+                echo "  ⏭  SKIP   $SCRIPT  (already applied)"
+                SKIPPED=$((SKIPPED+1)); continue
+              fi
+
+              if run_sql_file "$SCRIPT_PATH" 2>&1; then
+                END_MS=$(($(date +%s%N)/1000000))
+                DURATION=$((END_MS - START_MS))
+                run_sql -d "$DB" -Q \
+                  "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $DURATION);" \
+                  > /dev/null 2>&1
+                echo "  ✅ APPLIED $SCRIPT  (${DURATION}ms)"
+                APPLIED=$((APPLIED+1))
+              else
+                echo "  ❌ FAILED  $SCRIPT"
+                FAILED=$((FAILED+1))
+                FAILED_SCRIPTS="$FAILED_SCRIPTS $SCRIPT"
+                break
+              fi
+            done
+
+            # ── Step 4b: Run seed data scripts (after schema, only if clean) ──
+            if [ "$FAILED" -eq 0 ] && ls "$DEPLOY_DIR"/data/*.sql >/dev/null 2>&1; then
+              echo ""
+              echo "▶ Step 4b — Running seed data scripts"
+              for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/data/*.sql 2>/dev/null | sort); do
+                SCRIPT="data/$(basename "$SCRIPT_PATH")"
+                START_MS=$(($(date +%s%N)/1000000))
+
+                if [ "$DRY_RUN" = "true" ]; then
+                  echo "  🔍 WOULD  $SCRIPT"; APPLIED=$((APPLIED+1)); continue
+                fi
+
+                ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                  -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                  2>/dev/null | tr -d ' \r\n')
+                if [ "${ALREADY:-0}" = "1" ]; then
+                  echo "  ⏭  SKIP   $SCRIPT  (already applied)"; SKIPPED=$((SKIPPED+1)); continue
+                fi
+
+                if run_sql_file "$SCRIPT_PATH" 2>&1; then
+                  END_MS=$(($(date +%s%N)/1000000)); DURATION=$((END_MS - START_MS))
+                  run_sql -d "$DB" -Q \
+                    "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $DURATION);" \
+                    > /dev/null 2>&1
+                  echo "  ✅ APPLIED $SCRIPT  (${DURATION}ms)"; APPLIED=$((APPLIED+1))
+                else
+                  echo "  ❌ FAILED  $SCRIPT"; FAILED=$((FAILED+1)); FAILED_SCRIPTS="$FAILED_SCRIPTS $SCRIPT"; break
+                fi
+              done
+            fi
+
+            # ── Step 5: Verify ───────────────────────────────────────────────
+            echo ""
+            echo "▶ Step 5/5 — Verification"
+            if [ "$DRY_RUN" != "true" ] && [ "$FAILED" -eq 0 ]; then
+              TABLE_COUNT=$(run_sql -d "$DB" -h -1 -W \
+                -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';" \
+                2>/dev/null | tr -d ' \r\n')
+              echo "  📊 Total tables in [$DB]: $TABLE_COUNT"
+              echo ""
+              echo "  Tables:"
+              run_sql -d "$DB" -W \
+                -Q "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME;"
+              echo ""
+              echo "  Last 10 migrations applied:"
+              run_sql -d "$DB" -W \
+                -Q "SELECT TOP 10 ScriptName, FORMAT(AppliedAt,'yyyy-MM-dd HH:mm') AS AppliedAt, CAST(DurationMs AS VARCHAR)+'ms' AS Duration FROM dbo.__MigrationHistory ORDER BY Id DESC;"
+            fi
+
+            echo ""
+            echo "══════════════════════════════════════════════"
+            [ "$DRY_RUN" = "true" ] \
+              && echo "  DRY RUN — Would apply: $APPLIED | Already done: $SKIPPED" \
+              || echo "  ✅ Applied: $APPLIED  |  ⏭ Skipped: $SKIPPED  |  ❌ Failed: $FAILED"
+            echo "══════════════════════════════════════════════"
+
+            if [ $FAILED -gt 0 ]; then
+              echo "::error::Failed: $FAILED_SCRIPTS"
+              exit 1
+            fi
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🗄️ DB Migration — Dev" >> $GITHUB_STEP_SUMMARY
+          [ "${{ job.status }}" = "success" ] \
+            && echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY \
+            || echo "**Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scripts found | ${{ steps.validate.outputs.script_count }} |" >> $GITHUB_STEP_SUMMARY
+
+# ═══════════════════════════════════════════════════════════════════════════════
+  deploy-prod:
+    name: "Deploy Schema → Prod"
+    runs-on: ubuntu-latest
+    environment: production
+    if: |
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy schema files to Prod VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          port: 22
+          source: "schema/[0-9][0-9]_*.sql"
+          target: "/opt/myapp/dbdeploy/"
+          strip_components: 1
+
+      - name: Copy seed data files to Prod VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          port: 22
+          source: "data/*.sql"
+          target: "/opt/myapp/dbdeploy/data/"
+          strip_components: 1
+
+      - name: Run migrations on Prod VM
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SA_PASSWORD: ${{ secrets.PROD_SA_PASSWORD }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          port: 22
+          command_timeout: 20m
+          envs: SA_PASSWORD,DRY_RUN
+          script: |
+            set -euo pipefail
+            CONTAINER="sqlserver"; DB="1RadDatabase"; DEPLOY_DIR="/opt/myapp/dbdeploy"
+
+            run_sql() {
+              docker exec "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C "$@" 2>/dev/null || \
+              docker exec "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" "$@"
+            }
+            run_sql_file() {
+              docker exec -i "$CONTAINER" /opt/mssql-tools18/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB" -b -I < "$1" 2>/dev/null || \
+              docker exec -i "$CONTAINER" /opt/mssql-tools/bin/sqlcmd \
+                -S localhost -U sa -P "$SA_PASSWORD" -d "$DB" -b -I < "$1"
+            }
+
+            for i in $(seq 1 12); do
+              run_sql -Q "SELECT 1" > /dev/null 2>&1 && break
+              echo "⏳ Waiting ($i/12)..."; sleep 5
+              [ $i -eq 12 ] && exit 1
+            done
+
+            run_sql -Q "IF DB_ID('$DB') IS NULL CREATE DATABASE [$DB];"
+            run_sql -d "$DB" -Q "
+              IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='__MigrationHistory')
+              CREATE TABLE dbo.__MigrationHistory (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                ScriptName NVARCHAR(255) NOT NULL UNIQUE,
+                AppliedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+                AppliedBy NVARCHAR(100) NOT NULL DEFAULT 'github-actions',
+                DurationMs INT NULL
+              );"
+
+            APPLIED=0; SKIPPED=0; FAILED=0
+            for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/[0-9][0-9]_*.sql 2>/dev/null | sort); do
+              SCRIPT=$(basename "$SCRIPT_PATH")
+              ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                2>/dev/null | tr -d ' \r\n')
+              if [ "${ALREADY:-0}" = "1" ]; then
+                echo "  ⏭  SKIP $SCRIPT"; SKIPPED=$((SKIPPED+1)); continue
+              fi
+              START_MS=$(($(date +%s%N)/1000000))
+              if run_sql_file "$SCRIPT_PATH" 2>&1; then
+                END_MS=$(($(date +%s%N)/1000000))
+                run_sql -d "$DB" -Q \
+                  "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $((END_MS-START_MS)));" > /dev/null 2>&1
+                echo "  ✅ APPLIED $SCRIPT"; APPLIED=$((APPLIED+1))
+              else
+                echo "  ❌ FAILED $SCRIPT"; FAILED=$((FAILED+1)); break
+              fi
+            done
+
+            # ── Seed data scripts (after schema, only if clean) ──
+            if [ "$FAILED" -eq 0 ] && ls "$DEPLOY_DIR"/data/*.sql >/dev/null 2>&1; then
+              for SCRIPT_PATH in $(ls "$DEPLOY_DIR"/data/*.sql 2>/dev/null | sort); do
+                SCRIPT="data/$(basename "$SCRIPT_PATH")"
+                ALREADY=$(run_sql -d "$DB" -h -1 -W \
+                  -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM dbo.__MigrationHistory WHERE ScriptName='$SCRIPT';" \
+                  2>/dev/null | tr -d ' \r\n')
+                if [ "${ALREADY:-0}" = "1" ]; then
+                  echo "  ⏭  SKIP $SCRIPT"; SKIPPED=$((SKIPPED+1)); continue
+                fi
+                START_MS=$(($(date +%s%N)/1000000))
+                if run_sql_file "$SCRIPT_PATH" 2>&1; then
+                  END_MS=$(($(date +%s%N)/1000000))
+                  run_sql -d "$DB" -Q \
+                    "INSERT INTO dbo.__MigrationHistory (ScriptName, DurationMs) VALUES ('$SCRIPT', $((END_MS-START_MS)));" > /dev/null 2>&1
+                  echo "  ✅ APPLIED $SCRIPT"; APPLIED=$((APPLIED+1))
+                else
+                  echo "  ❌ FAILED $SCRIPT"; FAILED=$((FAILED+1)); break
+                fi
+              done
+            fi
+
+            TABLE_COUNT=$(run_sql -d "$DB" -h -1 -W \
+              -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE';" \
+              2>/dev/null | tr -d ' \r\n')
+            echo "📊 Tables: $TABLE_COUNT | ✅ Applied: $APPLIED | ⏭ Skipped: $SKIPPED | ❌ Failed: $FAILED"
+            [ $FAILED -gt 0 ] && exit 1
