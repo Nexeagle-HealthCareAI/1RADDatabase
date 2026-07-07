@@ -1,3 +1,7 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 -- Migration: 83_referrer_merge.sql
 -- Description: Adds MergedIntoId to Referrers to support reversible "Virtual Merges"
 --              of duplicate referral partners without data loss.
