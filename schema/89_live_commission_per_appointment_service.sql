@@ -20,7 +20,24 @@ BEGIN
         HAVING COUNT(*) > 1
     )
     BEGIN
-        THROW 51002, 'Cannot create UX_ReferralCommissions_Live_AppointmentService because duplicate live service commissions exist. Resolve duplicates before retrying this migration.', 1;
+        PRINT 'Resolving duplicate live service commissions...';
+        WITH RankedCommissions AS (
+            SELECT 
+                [Id],
+                ROW_NUMBER() OVER(
+                    PARTITION BY [AppointmentServiceId] 
+                    ORDER BY [CreatedAt] DESC, [Id] DESC
+                ) as rn
+            FROM [dbo].[ReferralCommissions]
+            WHERE [AppointmentServiceId] IS NOT NULL 
+              AND [DeletedAt] IS NULL
+        )
+        UPDATE [dbo].[ReferralCommissions]
+        SET [DeletedAt] = GETUTCDATE()
+        WHERE [Id] IN (
+            SELECT [Id] FROM RankedCommissions WHERE rn > 1
+        );
+        PRINT 'Duplicates resolved.';
     END;
 
     CREATE UNIQUE INDEX [UX_ReferralCommissions_Live_AppointmentService]
