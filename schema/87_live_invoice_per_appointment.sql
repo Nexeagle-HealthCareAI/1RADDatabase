@@ -2,6 +2,7 @@
 -- the same appointment. Soft-deleted invoices remain in the audit trail and
 -- do not block the next arrival-driven invoice.
 SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
 GO
 
 IF NOT EXISTS (
