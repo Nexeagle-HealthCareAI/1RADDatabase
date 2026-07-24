@@ -2,6 +2,7 @@
 -- history remains linked to its service; approved clawback rows are detached,
 -- and soft-deleted rows remain auditable without blocking reconciliation.
 SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
 GO
 
 IF NOT EXISTS (
