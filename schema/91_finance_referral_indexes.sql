@@ -18,6 +18,15 @@
 --     (only the auto FK indexes on InvoiceId/HospitalId).
 -- ============================================================
 
+-- Invoices carries a filtered index (UX_Invoices_Live_Appointment, from
+-- migration 87). SQL Server requires QUOTED_IDENTIFIER ON for any DDL
+-- against tables with filtered indexes; the CI sqlcmd session defaults to
+-- OFF and trips Msg 1934. Setting it in its own batch scopes the change
+-- correctly without leaking into other migration files.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 IF NOT EXISTS (
     SELECT * FROM sys.indexes
     WHERE name = 'IX_ReferralCommissions_AppointmentId'
