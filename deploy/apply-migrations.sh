@@ -10,7 +10,7 @@
 #   DRY_RUN         "true" = list what would run, change nothing
 #
 # Rules (Oct 2026 gap analysis P3-1/P3-2):
-#   * Only schema/NN_*.sql (two-digit prefix) and data/*.sql are ever applied.
+#   * Only schema/NN_*.sql / NNN_*.sql and data/*.sql are ever applied (numeric order).
 #     Unnumbered one-off scripts live in archive/ and are never run.
 #   * dbo.__MigrationHistory is the ledger; an applied script is never re-run.
 #   * Each script (from WRAP_FROM, default 96) runs inside ONE transaction together with its ledger row
@@ -67,8 +67,8 @@ apply_one() {
   local start end ok
   start=$(date +%s%3N)
   local num wrap=1
-  num=$(basename "$path" | cut -c1-2)
-  if [[ "$num" =~ ^[0-9][0-9]$ ]] && [ "$((10#$num))" -lt "$WRAP_FROM" ]; then wrap=0; fi
+  num=$(basename "$path" | sed -nE 's/^([0-9]{2,3})_.*/\1/p')
+  if [[ "$num" =~ ^[0-9]{2,3}$ ]] && [ "$((10#$num))" -lt "$WRAP_FROM" ]; then wrap=0; fi
   if grep -qiE '^[[:space:]]*BEGIN[[:space:]]+TRAN' "$path"; then wrap=0; fi
   if [ "$wrap" = "0" ]; then
     # Legacy script, or one that manages its own transaction(s): run as-is, then record it.
@@ -97,8 +97,9 @@ apply_one() {
 echo "=== Schema scripts ==="
 shopt -s nullglob
 SCHEMA_DIR="$DEPLOY_DIR"; [ -d "$DEPLOY_DIR/schema" ] && SCHEMA_DIR="$DEPLOY_DIR/schema"
-for f in $(printf '%s\n' "$SCHEMA_DIR"/[0-9][0-9]_*.sql | sort); do
-  apply_one "$f" "$(basename "$f")"
+# NN_ or NNN_ prefixes, in numeric order (so 100_ sorts after 99_).
+for name in $(ls "$SCHEMA_DIR" | grep -E '^[0-9]{2,3}_.*\.sql$' | sort -V); do
+  apply_one "$SCHEMA_DIR/$name" "$name"
 done
 
 echo "=== Data scripts ==="
