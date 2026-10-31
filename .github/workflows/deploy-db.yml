@@ -64,8 +64,12 @@ jobs:
         ports: ["1433:1433"]
     env:
       SA_PASSWORD: "Ci-${{ github.run_id }}-Xy9!"
-      SQL_CONTAINER: ${{ job.services.mssql.id }}
     steps:
+      # The job context (service container id) is only available to steps, not to the job's own env: putting it there
+      # made GitHub reject the whole workflow file, so no job ran at all. Every later step reads it from GITHUB_ENV.
+      - name: Point the steps at the SQL Server service container
+        run: echo "SQL_CONTAINER=${{ job.services.mssql.id }}" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - name: Refuse unnumbered scripts in schema/
