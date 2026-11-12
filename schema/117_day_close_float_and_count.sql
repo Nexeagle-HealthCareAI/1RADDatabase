@@ -15,6 +15,9 @@
 -- Requires 104. Safe to run more than once.
 -- Rollback: rollback/117_rollback_day_close_float_and_count.sql
 -- ============================================================
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 SET NOCOUNT ON;
 
 IF OBJECT_ID('dbo.DayCloses', 'U') IS NULL

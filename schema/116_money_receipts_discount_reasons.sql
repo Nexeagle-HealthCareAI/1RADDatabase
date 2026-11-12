@@ -19,6 +19,9 @@
 -- Requires 108 and 109. Safe to run more than once.
 -- Rollback: rollback/116_rollback_money_receipts_discount_reasons.sql
 -- ============================================================
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 SET NOCOUNT ON;
 
 IF OBJECT_ID('dbo.HospitalBillingSettings', 'U') IS NULL

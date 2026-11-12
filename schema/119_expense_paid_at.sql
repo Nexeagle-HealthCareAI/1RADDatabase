@@ -8,6 +8,9 @@
 -- Requires 06 (Expenses). Safe to run more than once.
 -- Rollback: rollback/119_rollback_expense_paid_at.sql
 -- ============================================================
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 SET NOCOUNT ON;
 IF COL_LENGTH('dbo.Expenses', 'PaidAt') IS NULL
     ALTER TABLE dbo.Expenses ADD PaidAt DATETIME2 NULL;

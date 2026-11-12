@@ -96,7 +96,7 @@ jobs:
             n=$(basename "$f" | sed -nE 's/^([0-9]{2,3})_.*/\1/p')
             [ "$((10#$n))" -ge 96 ] || continue
             echo "re-running $f"
-            docker exec -i "$SQL_CONTAINER" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -b -d 1RadDatabase < "$f"
+            docker exec -i "$SQL_CONTAINER" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -b -I -d 1RadDatabase < "$f"
           done
 
       - name: Export schema snapshot

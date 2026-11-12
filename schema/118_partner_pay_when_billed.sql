@@ -10,6 +10,9 @@
 -- Requires 109. Safe to run more than once.
 -- Rollback: rollback/118_rollback_partner_pay_when_billed.sql
 -- ============================================================
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 SET NOCOUNT ON;
 IF OBJECT_ID('dbo.HospitalBillingSettings', 'U') IS NULL
     THROW 51180, 'Run 109_hospital_billing_settings.sql first.', 1;
